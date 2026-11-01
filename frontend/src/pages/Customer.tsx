@@ -14,6 +14,7 @@ const STATUS: Record<string, [string, string]> = {
   FAILED: ['No se pudo reproducir', 'text-red-400'],
 };
 const WAITING = ['PENDING', 'APPROVED'];
+const compact = new Intl.NumberFormat('es', { notation: 'compact', maximumFractionDigits: 1 });
 const DEFAULT_PINK = '#ec4899';
 const TEAL = '#22d3c5';
 
@@ -45,6 +46,8 @@ export default function Customer() {
   const [sentId, setSentId] = useState<string | null>(null); // para el aviso "solicitud enviada"
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [googleQuery, setGoogleQuery] = useState(''); // si no esta vacio, se usa el respaldo de Google
+  const [sort, setSort] = useState<'views' | 'relevance'>('views');
+  const [googleEver, setGoogleEver] = useState(false);
   const [googleItems, setGoogleItems] = useState<GoogleItem[]>([]);
   const [adding, setAdding] = useState<any>(null); // cancion que se esta enviando (aviso mientras responde el servidor)
   const [msgIdx, setMsgIdx] = useState(0);
@@ -84,9 +87,18 @@ export default function Customer() {
     const term = q.trim();
     if (term.length < 3) {
       setResults([]);
+      setGoogleItems([]);
+      setGoogleQuery('');
       setSearchError('');
       lastQuery.current = '';
       return;
+    }
+    // Texto nuevo: limpiar de inmediato lo de la busqueda anterior (el caso "misma busqueda" no se toca)
+    if (term !== lastQuery.current) {
+      setResults([]);
+      setGoogleItems([]);
+      setGoogleQuery('');
+      setSearchError('');
     }
     const t = setTimeout(async () => {
       if (lastQuery.current === term) return;
@@ -94,7 +106,7 @@ export default function Customer() {
       setSearching(true);
       setSearchError('');
       try {
-        setResults(await pub('GET', `/youtube/search?q=${encodeURIComponent(term)}`));
+        setResults(await pub('GET', `/public/${token}/search?q=${encodeURIComponent(term)}`));
         setGoogleQuery('');
       } catch (e: any) {
         setResults([]);
@@ -102,6 +114,7 @@ export default function Customer() {
         // Cuota agotada o busqueda no configurada: respaldo con Google si esta configurado
         if (GOOGLE_CSE_ID && (e.status === 429 || e.status === 503)) {
           setGoogleItems([]);
+          setGoogleEver(true);
           setGoogleQuery(term);
         } else {
           setGoogleQuery('');
@@ -129,7 +142,8 @@ export default function Customer() {
   const brand = state.business.primaryColor;
   const accent = !brand || brand.toLowerCase() === DEFAULT_PINK ? TEAL : brand;
   const closed = !state.session ? 'El karaoke aun no ha comenzado' : !state.session.open ? 'Las solicitudes estan pausadas por ahora' : '';
-  const waitingCount = state.mine.filter((r: any) => WAITING.includes(r.status)).length;
+  // El cupo de la mesa se libera cuando la cancion termina (no al empezar a sonar)
+  const waitingCount = state.mine.filter((r: any) => [...WAITING, 'PLAYING'].includes(r.status)).length;
   const full = waitingCount >= state.maxPending;
   const requestedIds = new Set(state.mine.filter((r: any) => WAITING.includes(r.status) || r.status === 'PLAYING').map((r: any) => r.videoId));
 
@@ -150,6 +164,12 @@ export default function Customer() {
           durationSec: s.durationSec,
         });
         setSentId(r.id);
+        // Cancion en cola: buscador limpio para la siguiente
+        setQ('');
+        setResults([]);
+        setGoogleItems([]);
+        setGoogleQuery('');
+        lastQuery.current = '';
         await load();
       } finally {
         setBusyVideo(null);
@@ -200,9 +220,20 @@ export default function Customer() {
         </header>
 
         {closed && <div className="mt-4 rounded-xl bg-amber-500/15 p-3 text-sm text-amber-200">{closed}</div>}
+        {!closed && full && (
+          <div className="mt-4 flex gap-3 rounded-xl border border-amber-400/30 bg-amber-500/15 p-3 text-sm text-amber-100" role="alert">
+            <span className="text-lg leading-none">⏳</span>
+            <span>
+              <b>Tu mesa ya no puede agregar más canciones.</b>
+              <br />
+              Tienen {waitingCount} sin terminar (máximo {state.maxPending}). Cuando termine una podrán pedir otra.
+            </span>
+          </div>
+        )}
 
-        {view === 'home' && (
-          <main className="flex-1">
+        {/* Inicio siempre montado (solo se oculta): el buscador de Google no tolera que su contenedor se destruya */}
+        {(
+          <main className={view === 'home' ? 'flex-1' : 'hidden'}>
             {/* Bienvenida: se oculta mientras se busca para dar espacio a los resultados */}
             {!q.trim() && (
               <section className="px-2 pb-6 pt-10 text-center">
@@ -226,7 +257,7 @@ export default function Customer() {
 
             {!q.trim() && (
               <p className="mt-4 text-center text-sm text-slate-500">
-                Tu mesa: {waitingCount}/{state.maxPending} canciones en espera
+                Tu mesa: {waitingCount}/{state.maxPending} canciones sin terminar
               </p>
             )}
 
@@ -248,7 +279,22 @@ export default function Customer() {
                 {!searching && !searchError && !googleQuery && q.trim().length >= 3 && results.length === 0 && lastQuery.current && (
                   <p className="text-sm text-slate-500">Sin resultados.</p>
                 )}
-                {results.map((s) => {
+                {results.length > 1 && (
+                  <div className="flex items-center gap-2 pb-1 text-xs">
+                    <span className="text-slate-500">Ordenar:</span>
+                    {([['views', '🔥 Más vistos'], ['relevance', 'Relevancia']] as const).map(([k, label]) => (
+                      <button
+                        key={k}
+                        onClick={() => setSort(k)}
+                        className="rounded-full border px-3 py-1 font-medium"
+                        style={sort === k ? { background: accent, borderColor: accent, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.15)', color: '#cbd5e1' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(sort === 'views' ? [...results].sort((a, b) => (b.viewCount ?? -1) - (a.viewCount ?? -1)) : results).map((s) => {
                   const done = requestedIds.has(s.videoId);
                   const disabled = !!closed || full || done || busyVideo === s.videoId;
                   return (
@@ -256,7 +302,7 @@ export default function Customer() {
                       <Thumb src={s.thumbnail} className="h-14 w-14" />
                       <div className="min-w-0 flex-1">
                         <div className="line-clamp-2 text-[15px] font-semibold leading-tight">{s.title}</div>
-                        <div className="mt-0.5 truncate text-xs text-slate-400">{s.channelTitle} {fmtDuration(s.durationSec)}</div>
+                        <div className="mt-0.5 truncate text-xs text-slate-400">{s.channelTitle} {fmtDuration(s.durationSec)}{s.viewCount ? ` · ${compact.format(s.viewCount)} vistas` : ''}</div>
                       </div>
                       <button
                         aria-label={done ? 'Ya solicitada' : 'Pedir canción'}
@@ -290,10 +336,16 @@ export default function Customer() {
                         </div>
                       );
                     })}
-                    <GoogleSearch query={googleQuery} onResults={setGoogleItems} onError={setSearchError} onPick={(g) => !closed && !full && !requestedIds.has(g.videoId) && requestGoogle(g)} />
                   </>
                 )}
                 {full && (results.length > 0 || googleItems.length > 0) && <p className="text-center text-xs text-amber-300">Tu mesa llegó al máximo de canciones en espera ({state.maxPending}).</p>}
+              </div>
+            )}
+
+            {/* Una vez usado, el bloque de Google queda montado y solo se oculta cuando no hay busqueda de respaldo */}
+            {googleEver && (
+              <div className={googleQuery && q.trim() ? '' : 'hidden'}>
+                <GoogleSearch query={googleQuery} mode={state.business.searchMode} onResults={setGoogleItems} onError={setSearchError} onPick={(g) => closed ? toast(closed, true) : full ? toast(`Tu mesa ya tiene ${waitingCount} canciones sin terminar (máximo ${state.maxPending}).`, true) : requestedIds.has(g.videoId) ? toast('Ya pediste esta canción', true) : requestGoogle(g)} />
               </div>
             )}
           </main>

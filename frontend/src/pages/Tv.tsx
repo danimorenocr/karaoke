@@ -76,7 +76,9 @@ export default function Tv() {
       setBlocked(false);
       setPlaying(false);
       setSlow(false);
-      p.loadVideoById(cur.videoId);
+      // Si la TV se recargo (o el servidor reinicio) a mitad de cancion, retoma donde iba
+      const pos = Number(s.session?.positionSec ?? 0);
+      p.loadVideoById({ videoId: cur.videoId, startSeconds: pos > 5 ? pos - 2 : 0 });
       lastPaused.current = false;
     }
     const paused = !!s.session?.paused;
@@ -139,6 +141,15 @@ export default function Tv() {
       if (name === 'playback.reload' && stateRef.current) sync(stateRef.current, true);
     });
     const poll = setInterval(load, 15000); // recuperacion si se pierde algun evento
+    // Latido cada 5 s: avisa al servidor que la TV sigue viva y guarda en que segundo va la cancion
+    const beat = setInterval(() => {
+      if (!armedRef.current) return;
+      const p = playerRef.current;
+      const id = loadedId.current;
+      const st = p?.getPlayerState?.();
+      const sendPos = id && (st === window.YT?.PlayerState?.PLAYING || st === window.YT?.PlayerState?.PAUSED);
+      api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(p.getCurrentTime()) } : {}).catch(() => {});
+    }, 5000);
     // Al volver a la pestana, asegura que el video siga sonando si no esta en pausa
     const onVisible = () => {
       const p = playerRef.current;
@@ -151,6 +162,7 @@ export default function Tv() {
       dead = true;
       off();
       clearInterval(poll);
+      clearInterval(beat);
       playerRef.current?.destroy?.();
     };
   }, [load]);

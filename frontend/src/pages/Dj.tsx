@@ -2,6 +2,7 @@ import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
+import DjSearch from '../components/DjSearch';
 
 const ACCENT = '#22d3c5';
 const ON_ACCENT = '#04202a';
@@ -45,10 +46,30 @@ const Btn = ({ kind = 'ghost', className = '', ...p }: React.ButtonHTMLAttribute
   );
 };
 
+/** Pitido corto de aviso (puede no sonar si el navegador aun no tuvo interaccion con la pagina). */
+function beep() {
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new Ctx();
+    [0, 0.25].forEach((t) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.15, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+      o.connect(g).connect(ctx.destination);
+      o.start(ctx.currentTime + t);
+      o.stop(ctx.currentTime + t + 0.2);
+    });
+    setTimeout(() => ctx.close(), 800);
+  } catch { /* sin audio */ }
+}
+
 export default function Dj() {
   const [s, setS] = useState<any>(null);
   const [online, setOnline] = useState(true);
   const [tvConnected, setTvConnected] = useState(false);
+  const [tvDown, setTvDown] = useState(false); // la TV lleva varios segundos desconectada
   const { toast, node } = useToast();
   const run = useAction(toast);
   const user = auth.user();
@@ -83,6 +104,21 @@ export default function Dj() {
     [ids[i], ids[j]] = [ids[j], ids[i]];
     act('PATCH', '/dj/queue/reorder', { ids });
   };
+
+  // Alerta si la TV se desconecta con la sesion en marcha (se espera 8 s para ignorar parpadeos de red)
+  const tvStarted = !!s?.session?.tvStarted;
+  useEffect(() => {
+    if (!(tvStarted && !tvConnected)) { setTvDown(false); return; }
+    const t = setTimeout(() => setTvDown(true), 8000);
+    return () => clearTimeout(t);
+  }, [tvStarted, tvConnected]);
+  useEffect(() => {
+    if (!tvDown) { document.title = 'Karaoke'; return; }
+    beep();
+    let on = true;
+    const t = setInterval(() => { document.title = on ? '⚠️ TV DESCONECTADA' : 'Karaoke'; on = !on; }, 1000);
+    return () => { clearInterval(t); document.title = 'Karaoke'; };
+  }, [tvDown]);
 
   const togglePause = () => {
     const value = !s.session.paused;
@@ -130,6 +166,17 @@ export default function Dj() {
         </div>
       </header>
 
+      {tvDown && (
+        <div className="border-b border-red-400/30 bg-red-500/20 px-6 py-3 text-center text-sm font-semibold text-red-100" role="alert">
+          ⚠️ La pantalla de TV se desconectó. Revisa el internet o el navegador de la TV; al volver se reconecta sola
+          (si recargaron la página, hay que pulsar “Iniciar karaoke” otra vez).
+        </div>
+      )}
+      {!tvDown && session?.tvStarted && tvConnected && !s.tvArmed && (
+        <div className="border-b border-amber-400/30 bg-amber-500/15 px-6 py-2 text-center text-sm text-amber-100">
+          La TV está abierta pero no está reproduciendo: falta pulsar “Iniciar karaoke” en esa pantalla.
+        </div>
+      )}
       {!session ? (
         <div className="mx-auto mt-24 max-w-md px-6 text-center">
           <div className="mb-3 text-5xl">🎤</div>
@@ -170,6 +217,8 @@ export default function Dj() {
                 </p>
               )}
             </section>
+
+            <DjSearch tables={s.tables} mode={s.business.searchMode} onAdded={load} toast={toast} />
 
             <Card title="Por aprobar" count={s.pending.length}>
               {s.pending.length === 0 ? (

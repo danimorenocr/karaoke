@@ -66,7 +66,12 @@ export function connectSocket(
 ): () => void {
   const socket: Socket = io(API_URL, {
     auth: opts.tableToken ? { tableToken: opts.tableToken } : { token: auth.token(), role: opts.role },
+    // Reconexion automatica y sin limite de intentos (el wifi del bar puede caerse un rato)
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 500,
     reconnectionDelayMax: 5000,
+    timeout: 10000,
   });
   ['queue.updated', 'playback.paused', 'playback.resumed', 'playback.reload', 'tv.status'].forEach((e) =>
     socket.on(e, (p) => onEvent(e, p)),

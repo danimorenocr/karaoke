@@ -6,6 +6,8 @@ export interface SongSearchResult {
   channelTitle: string;
   thumbnail: string;
   durationSec?: number;
+  viewCount?: number;
+  isMusic?: boolean;
 }
 
 /** Abstraccion para poder cambiar de proveedor sin tocar cola ni mesas. */
@@ -14,6 +16,8 @@ export interface MusicProvider {
 }
 
 const VIDEO_ID = /^[\w-]{11}$/;
+// Pistas de que un video es musical (cuando YouTube no da la categoria)
+const MUSIC_RE = /karaoke|lyrics?|letra|instrumental|official (audio|video|music)|(video|audio) oficial|m[uú]sica|music|cover|remix|en vivo|live|feat\.|ft\.|vevo|- topic|session|acoustic|ac[uú]stic/i;
 const TTL_MS = 60 * 60 * 1000;
 
 function parseVideoId(q: string): string | null {
@@ -35,18 +39,60 @@ export class YoutubeService implements MusicProvider {
   private cache = new Map<string, { at: number; data: SongSearchResult[] }>();
   private quotaBlockedUntil = 0;
 
-  async searchSongs(query: string): Promise<SongSearchResult[]> {
+  /** mode KARAOKE: versiones karaoke. ANY: cualquier video de musica. */
+  async searchSongs(query: string, mode: 'KARAOKE' | 'ANY' = 'KARAOKE'): Promise<SongSearchResult[]> {
     const q = query.trim().toLowerCase();
     if (q.length < 2) throw new BadRequestException('Escribe al menos 2 caracteres');
-    const hit = this.cache.get(q);
+    const key = `${mode}:${q}`; // cada modo tiene su propia cache
+    const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
 
     // Pegar un link/ID no gasta cuota de search.list
     const id = parseVideoId(query);
-    const data = id ? await this.byId(id) : await this.search(query.trim());
-    this.cache.set(q, { at: Date.now(), data });
+    const data = id ? await this.byId(id) : await this.search(query.trim(), mode);
+    this.cache.set(key, { at: Date.now(), data });
     if (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value!);
     return data;
+  }
+
+  private embeddable = new Map<string, { at: number; ok: boolean; music: boolean }>();
+
+  /** Devuelve solo los ids que se pueden reproducir en un reproductor incrustado (disponibles y no restringidos). */
+  async filterEmbeddable(rawIds: string[], musicOnly = false): Promise<string[]> {
+    const ids = [...new Set(rawIds.filter((i) => VIDEO_ID.test(i)))].slice(0, 20);
+    const fresh = (id: string) => {
+      const c = this.embeddable.get(id);
+      return c && Date.now() - c.at < 6 * TTL_MS ? c : null;
+    };
+    const todo = ids.filter((id) => !fresh(id));
+    if (todo.length) {
+      let checked = false;
+      if (process.env.YOUTUBE_API_KEY) {
+        try {
+          const found = new Map((await this.videos(todo)).map((v) => [v.videoId, !!v.isMusic]));
+          todo.forEach((id) => this.embeddable.set(id, { at: Date.now(), ok: found.has(id), music: found.get(id) ?? false }));
+          checked = true;
+        } catch {
+          // cuota agotada: se comprueba con oEmbed
+        }
+      }
+      if (!checked) {
+        await Promise.all(
+          todo.map(async (id) => {
+            try {
+              const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`, { signal: AbortSignal.timeout(4000) });
+              // 401/404 = no incrustable o no existe. oEmbed no da categoria: se juzga por titulo y canal.
+              const j: any = r.ok ? await r.json().catch(() => ({})) : {};
+              this.embeddable.set(id, { at: Date.now(), ok: r.ok, music: MUSIC_RE.test(`${j.title ?? ''} ${j.author_name ?? ''}`) });
+            } catch {
+              // sin respuesta: no se guarda, se deja pasar y se valida al pedirlo
+              this.embeddable.set(id, { at: Date.now() - 6 * TTL_MS + 60_000, ok: true, music: true });
+            }
+          }),
+        );
+      }
+    }
+    return ids.filter((id) => fresh(id)?.ok && (!musicOnly || fresh(id)?.music));
   }
 
   private key() {
@@ -75,7 +121,7 @@ export class YoutubeService implements MusicProvider {
 
   private async videos(ids: string[]): Promise<SongSearchResult[]> {
     const url = new URL('https://www.googleapis.com/youtube/v3/videos');
-    url.search = new URLSearchParams({ part: 'snippet,contentDetails,status', id: ids.join(','), key: this.key() }).toString();
+    url.search = new URLSearchParams({ part: 'snippet,contentDetails,status,statistics', id: ids.join(','), key: this.key() }).toString();
     const j: any = await this.call(url);
     return (j.items ?? [])
       .filter((v: any) => v.status?.embeddable !== false)
@@ -85,10 +131,13 @@ export class YoutubeService implements MusicProvider {
         channelTitle: v.snippet.channelTitle,
         thumbnail: v.snippet.thumbnails?.medium?.url ?? v.snippet.thumbnails?.default?.url ?? '',
         durationSec: isoToSeconds(v.contentDetails.duration),
+        viewCount: Number(v.statistics?.viewCount) || undefined,
+        // Categoria 10 = Musica; si no, se mira el titulo/canal
+        isMusic: v.snippet.categoryId === '10' || MUSIC_RE.test(`${v.snippet.title} ${v.snippet.channelTitle}`),
       }));
   }
 
-  private async search(q: string): Promise<SongSearchResult[]> {
+  private async search(q: string, mode: 'KARAOKE' | 'ANY'): Promise<SongSearchResult[]> {
     if (Date.now() < this.quotaBlockedUntil) {
       throw new HttpException(
         'La busqueda esta temporalmente limitada. Intenta mas tarde o pega un link de YouTube.',
@@ -96,18 +145,23 @@ export class YoutubeService implements MusicProvider {
       );
     }
     const url = new URL('https://www.googleapis.com/youtube/v3/search');
-    url.search = new URLSearchParams({
+    const params: Record<string, string> = {
       part: 'snippet',
       type: 'video',
-      maxResults: '10',
+      maxResults: '15',
       videoEmbeddable: 'true',
       videoSyndicated: 'true',
-      q: `${q} karaoke`,
+      q: mode === 'KARAOKE' ? `${q} karaoke` : q,
       key: this.key(),
-    }).toString();
+    };
+    if (mode === 'ANY') params.videoCategoryId = '10'; // categoria "Musica"
+    url.search = new URLSearchParams(params).toString();
     const j: any = await this.call(url);
     const ids = (j.items ?? []).map((i: any) => i.id.videoId).filter(Boolean);
-    return ids.length ? this.videos(ids) : [];
+    if (!ids.length) return [];
+    const items = await this.videos(ids);
+    // Se conserva el orden de relevancia de YouTube; el orden por vistas lo aplica el cliente
+    return ids.map((id: string) => items.find((i) => i.videoId === id)).filter(Boolean) as SongSearchResult[];
   }
 
   private async call(url: URL) {

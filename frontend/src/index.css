@@ -57,6 +57,23 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   padding: 10px 12px;
   margin: 0 0 10px;
 }
+/* Lineas separadoras de Google (venian en blanco): color turquesa suave. Para cambiarlo, edita --cse-line. */
+.karaoke-cse { --cse-line: rgba(34, 211, 197, 0.22); }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result,
+.karaoke-cse .gsc-results .gs-webResult.gs-result,
+.karaoke-cse .gsc-results .gsc-expansionArea,
+.karaoke-cse .gsc-results .gsc-table-result,
+.karaoke-cse .gsc-results .gsc-thumbnail-inside,
+.karaoke-cse .gsc-results .gsc-adBlock,
+.karaoke-cse .gsc-resultsbox-visible,
+.karaoke-cse .gsc-results-wrapper-visible,
+.karaoke-cse .gsc-results-wrapper-overlay {
+  border-color: var(--cse-line) !important;
+}
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result,
+.karaoke-cse .gsc-results .gs-webResult.gs-result { border-bottom-color: var(--cse-line) !important; }
+.karaoke-cse hr,
+.karaoke-cse .gsc-results .gsc-expansionArea + .gsc-expansionArea { border-color: var(--cse-line) !important; background-color: var(--cse-line) !important; }
 .karaoke-cse .gsc-webResult.gsc-result:hover {
   background-color: rgba(255, 255, 255, 0.07);
   border-color: rgba(34, 211, 197, 0.45);
@@ -78,15 +95,68 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 .karaoke-cse .gs-webResult.gs-result a.gs-title:hover,
 .karaoke-cse .gs-webResult.gs-result a.gs-title:hover b { color: #22d3c5; }
 
-/* Descripcion y URL visible */
-.karaoke-cse .gs-webResult .gs-snippet { color: #cbd5e1; font-size: 13px; line-height: 1.45; }
-.karaoke-cse .gs-webResult .gs-snippet b { color: #e2e8f0; }
-.karaoke-cse .gs-webResult .gs-visibleUrl,
-.karaoke-cse .gs-webResult .gs-visibleUrl-short { color: #5eead4; font-size: 12px; }
+/* Resultados normales: solo titulo y miniatura (sin descripcion, URL ni etiquetas). Los anuncios no se tocan. */
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-snippet,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-visibleUrl,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-visibleUrl-short,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-visibleUrl-breadcrumb,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-per-result-labels,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-richsnippet-box { display: none !important; }
 
-/* Miniaturas uniformes */
-.karaoke-cse .gsc-thumbnail-inside { padding: 2px 0 0 10px; }
-.karaoke-cse .gs-webResult img.gs-image { border: none; border-radius: 10px; max-width: 96px; max-height: 96px; object-fit: cover; }
+/* Cada resultado en una fila: miniatura a la izquierda, titulo a la derecha */
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) {
+  display: grid !important;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  padding: 0 !important;
+}
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-thumbnail-inside {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0 !important;
+  min-width: 0;
+}
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-table-result {
+  grid-column: 1;
+  grid-row: 1;
+  display: block !important;
+  width: auto !important;
+  margin: 0 !important;
+}
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-table-result .gsc-table-cell-snippet-close,
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-url-top { display: none !important; }
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-table-cell-thumbnail {
+  display: block !important;
+  width: 104px !important;
+  padding: 0 !important;
+}
+.karaoke-cse .gs-webResult .gs-image-box,
+.karaoke-cse .gs-webResult .gs-web-image-box {
+  display: block;
+  width: 104px !important;
+  height: 58px !important;
+  margin: 0 !important;
+}
+.karaoke-cse .gs-webResult img.gs-image {
+  display: block;
+  width: 104px !important;
+  height: 58px !important;
+  max-width: none !important;
+  max-height: none !important;
+  border: none;
+  border-radius: 10px;
+  object-fit: cover;
+}
+/* Titulo: maximo 2 lineas */
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gs-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+}
+.karaoke-cse .gsc-webResult.gsc-result:not(.gsc-promotion) { padding: 10px !important; cursor: pointer; }
 
 /* Anuncios y promociones: se muestran completos, solo se adaptan los colores */
 .karaoke-cse .gsc-adBlock { background-color: transparent; }
@@ -138,3 +208,62 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 /* Atribucion de Google: sigue visible, en tonos del tema */
 .karaoke-cse .gcsc-find-more-on-google { color: #94a3b8; }
 .karaoke-cse .gcsc-find-more-on-google-magnifier { fill: #94a3b8; }
+
+/* Linea blanca entre tarjetas: se fuerza color/fondo en todo el arbol de resultados.
+   El color se controla con --cse-line. */
+.karaoke-cse .gsc-results,
+.karaoke-cse .gsc-results-wrapper-visible,
+.karaoke-cse .gsc-resultsbox-visible,
+.karaoke-cse .gsc-expansionArea,
+.karaoke-cse .gsc-wrapper { background: transparent !important; }
+.karaoke-cse .gsc-results * { border-color: var(--cse-line) !important; outline-color: var(--cse-line) !important; }
+.karaoke-cse .gsc-results .gsc-expansionArea > * { box-shadow: none !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result,
+.karaoke-cse .gsc-results .gs-webResult.gs-result { border-bottom: 1px solid var(--cse-line) !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result::before,
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result::after { border-color: var(--cse-line) !important; background: transparent !important; }
+
+/* Franjas claras entre tarjetas: cualquier fondo claro dentro de los resultados de Google pasa a transparente
+   y solo las tarjetas conservan su fondo oscuro. */
+.karaoke-cse .gsc-results *:not(img):not(svg):not(path) { background-color: transparent !important; background-image: none !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result:not(.gsc-promotion) { background-color: rgba(255, 255, 255, 0.04) !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result:not(.gsc-promotion):hover { background-color: rgba(255, 255, 255, 0.07) !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result.gsc-promotion { background-color: rgba(34, 211, 197, 0.08) !important; }
+/* Sin lineas ni sombras de relleno entre resultados */
+.karaoke-cse .gsc-results .gsc-expansionArea { border: 0 !important; padding: 0 !important; margin: 0 !important; }
+.karaoke-cse .gsc-results .gsc-webResult.gsc-result { box-shadow: none !important; }
+
+/* Fila del resultado de Google: miniatura y titulo siempre alineados al centro (flex, no depende de la tabla de Google) */
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 14px;
+}
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-table-result {
+  order: -1;
+  flex: 0 0 104px;
+  align-self: center !important;
+  display: flex !important;
+  align-items: center;
+  height: auto !important;
+}
+.karaoke-cse .gs-webResult.gs-result:not(.gs-promotion) .gsc-thumbnail-inside {
+  order: 1;
+  flex: 1 1 auto;
+  align-self: center !important;
+}
+.karaoke-cse .gs-webResult .gsc-table-cell-thumbnail,
+.karaoke-cse .gs-webResult .gs-image-box,
+.karaoke-cse .gs-webResult .gs-web-image-box,
+.karaoke-cse .gs-webResult a.gs-image {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  vertical-align: middle !important;
+}
+.karaoke-cse .gs-webResult .gs-title { margin: 0 !important; line-height: 1.3; }
+/* Sin contador de resultados ni selector "Ordenar por" */
+.karaoke-cse .gsc-result-info-container,
+.karaoke-cse .gsc-orderby-container { display: none !important; }

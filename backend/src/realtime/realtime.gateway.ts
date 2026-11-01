@@ -1,4 +1,4 @@
-import { Global, Injectable, Module } from '@nestjs/common';
+import { Global, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { AuthGuard } from '../auth/auth';
@@ -10,10 +10,33 @@ const origins = () => (process.env.CORS_ORIGINS ?? 'http://localhost:5173').spli
  * Salas: `biz:<id>` (todos los clientes del bar) y `tv:<id>` (pantallas TV).
  * Los eventos solo avisan; la fuente de verdad es el backend via REST.
  */
-@WebSocketGateway({ cors: { origin: origins(), credentials: true } })
-export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
+@WebSocketGateway({
+  cors: { origin: origins(), credentials: true },
+  // Latidos: el servidor hace ping cada 10 s y si no hay respuesta en 8 s da la conexion por perdida
+  // (asi la TV caida se detecta en ~18 s y no en minutos).
+  pingInterval: 10_000,
+  pingTimeout: 8_000,
+})
+export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   @WebSocketServer() server: Server;
+  private keepAlive?: NodeJS.Timeout;
   constructor(private prisma: PrismaService, private auth: AuthGuard) {}
+
+  /**
+   * Mientras haya alguien conectado, un SELECT 1 cada 3 min evita que Neon suspenda la BD
+   * (la primera consulta tras una suspension tarda segundos). Sin clientes no consulta: no gasta horas de computo.
+   */
+  onModuleInit() {
+    this.keepAlive = setInterval(() => {
+      if ((this.server?.engine?.clientsCount ?? 0) > 0) {
+        this.prisma.$queryRaw`SELECT 1`.catch((e) => new Logger('KeepAlive').warn(`BD no responde: ${e.message}`));
+      }
+    }, 3 * 60_000);
+  }
+
+  onModuleDestroy() {
+    clearInterval(this.keepAlive);
+  }
 
   async handleConnection(socket: Socket) {
     try {

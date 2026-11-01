@@ -14,6 +14,8 @@ export interface NewRequestInput {
 }
 
 const WAITING: RequestStatus[] = ['PENDING', 'APPROVED'];
+// Ocupan cupo de la mesa: en espera o sonando. El cupo se libera al completarse (o cancelarse/rechazarse).
+const HOLDING: RequestStatus[] = ['PENDING', 'APPROVED', 'PLAYING'];
 const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED'];
 
 /**
@@ -61,6 +63,7 @@ export class QueueService {
     });
     if (next) {
       await tx.songRequest.update({ where: { id: next.id }, data: { status: 'PLAYING', startedAt: new Date() } });
+      await tx.karaokeSession.update({ where: { id: sessionId }, data: { positionSec: 0 } }); // cancion nueva: empieza desde 0
     }
   }
 
@@ -91,7 +94,11 @@ export class QueueService {
   async djState(businessId: string) {
     const session = await this.activeSession(this.prisma, businessId);
     const business = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
-    const base = { business: { name: business.name, autoApprove: business.autoApprove }, tvConnected: this.rt.tvCount(businessId) > 0 };
+    // TV conectada = socket abierto en esta instancia O latido reciente guardado en BD (sirve tras reinicios o con varias instancias)
+    const tvConnected = this.rt.tvCount(businessId) > 0 || (!!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000);
+    // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
+    const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
+    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode }, tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -114,6 +121,7 @@ export class QueueService {
         requestsOpen: session.requestsOpen,
         paused: session.paused,
         tvStarted: session.tvStarted,
+        positionSec: session.positionSec,
         startedAt: session.startedAt,
       },
       current: current && this.view(current),
@@ -147,7 +155,7 @@ export class QueueService {
     const b = table.business;
     const session = await this.activeSession(this.prisma, b.id);
     const out = {
-      business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor },
+      business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor, searchMode: b.searchMode },
       table: { name: table.name },
       session: session ? { open: session.requestsOpen } : null,
       maxPending: b.maxPendingPerTable,
@@ -232,9 +240,17 @@ export class QueueService {
       if (!session.requestsOpen) throw new ConflictException('Las solicitudes estan cerradas por ahora');
 
       // El conteo ocurre dentro del lock del establecimiento: dos clientes simultaneos no pueden pasar el limite.
-      const waiting = await tx.songRequest.count({ where: { tableId: table.id, sessionId: session.id, status: { in: WAITING } } });
+      // Tras "desvincular" la mesa empieza de cero: solo cuentan las pedidas despues
+      const waiting = await tx.songRequest.count({
+        where: {
+          tableId: table.id,
+          sessionId: session.id,
+          status: { in: HOLDING },
+          ...(table.historyClearedAt ? { requestedAt: { gt: table.historyClearedAt } } : {}),
+        },
+      });
       if (waiting >= business.maxPendingPerTable) {
-        throw new ConflictException(`Tu mesa ya tiene ${waiting} canciones en espera (maximo ${business.maxPendingPerTable})`);
+        throw new ConflictException(`Tu mesa ya tiene ${waiting} canciones pedidas sin terminar (maximo ${business.maxPendingPerTable})`);
       }
       const last = await tx.songRequest.aggregate({ where: { sessionId: session.id }, _max: { position: true } });
       const created = await tx.songRequest.create({
@@ -324,6 +340,33 @@ export class QueueService {
     });
   }
 
+  /** El DJ agrega una cancion directo a la cola (aprobada, sin limite por mesa ni revision). */
+  djAddRequest(businessId: string, tableId: string, input: NewRequestInput) {
+    return this.locked(businessId, async (tx) => {
+      const session = await this.requireActiveSession(tx, businessId);
+      const table = await tx.table.findFirst({ where: { id: tableId, businessId } });
+      if (!table) throw new NotFoundException('Mesa no encontrada');
+      const last = await tx.songRequest.aggregate({ where: { sessionId: session.id }, _max: { position: true } });
+      const created = await tx.songRequest.create({
+        data: {
+          businessId,
+          tableId: table.id,
+          sessionId: session.id,
+          videoId: input.videoId,
+          title: input.title.slice(0, 200),
+          channel: input.channel?.slice(0, 120),
+          thumbnail: input.thumbnail?.slice(0, 500),
+          durationSec: input.durationSec,
+          position: (last._max.position ?? 0) + 1,
+          status: 'APPROVED',
+        },
+        include: { table: { select: { name: true } } },
+      });
+      await this.promote(tx, session.id);
+      return this.view(created);
+    });
+  }
+
   /** Saltar la cancion actual. */
   skip(businessId: string) {
     return this.locked(businessId, async (tx) => {
@@ -363,6 +406,24 @@ export class QueueService {
       await this.promote(tx, s.id);
       return { ok: true };
     });
+  }
+
+  /**
+   * Latido de la TV cada ~5 s: marca que sigue viva y guarda en que segundo va la cancion.
+   * Sin lock ni transaccion (es muy frecuente); solo guarda la posicion si requestId es la que suena ahora.
+   */
+  async playerHeartbeat(businessId: string, requestId?: string, positionSec?: number) {
+    const s = await this.activeSession(this.prisma, businessId);
+    if (!s) return { ok: true };
+    const data: { tvLastSeenAt: Date; positionSec?: number } = { tvLastSeenAt: new Date() };
+    if (requestId && positionSec !== undefined) {
+      const cur = await this.prisma.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' }, select: { id: true } });
+      if (cur?.id === requestId) data.positionSec = Math.max(0, Math.floor(positionSec));
+    }
+    const wasDown = !s.tvLastSeenAt || Date.now() - s.tvLastSeenAt.getTime() > 20_000;
+    await this.prisma.karaokeSession.update({ where: { id: s.id }, data });
+    if (wasDown) this.rt.queueUpdated(businessId); // la TV acaba de volver: que el DJ lo vea ya
+    return { ok: true };
   }
 
   playerEnded(businessId: string, requestId: string) {

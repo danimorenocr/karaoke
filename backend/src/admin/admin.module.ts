@@ -1,5 +1,5 @@
 import { Body, ConflictException, Controller, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsEmail, IsHexColor, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
@@ -25,6 +25,7 @@ class UpdateBusinessDto {
   @IsOptional() @IsHexColor() primaryColor?: string;
   @IsOptional() @IsInt() @Min(1) @Max(20) maxPendingPerTable?: number;
   @IsOptional() @IsBoolean() autoApprove?: boolean;
+  @IsOptional() @IsIn(['KARAOKE', 'ANY']) searchMode?: 'KARAOKE' | 'ANY';
 }
 class TableDto {
   @IsString() @MinLength(1) @MaxLength(40) name: string;

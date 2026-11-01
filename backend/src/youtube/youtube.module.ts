@@ -6,8 +6,15 @@ import { YoutubeService } from './youtube.service';
 class YoutubeController {
   constructor(private yt: YoutubeService) {}
 
+  /** ?ids=a,b,c -> ids que si se pueden reproducir en la TV (para filtrar resultados antes de mostrarlos). */
+  @Get('validate')
+  @Throttle({ default: { limit: 90, ttl: 60_000 } })
+  async validate(@Query('ids') ids = '', @Query('music') music = '') {
+    return { ok: await this.yt.filterEmbeddable(ids.split(','), music === '1') };
+  }
+
   @Get('search')
-  @Throttle({ default: { limit: 12, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   search(@Query('q') q = '') {
     return this.yt.searchSongs(q);
   }

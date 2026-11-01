@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../lib/api';
 import { useAction, useToast } from '../components/ui';
-import { Badge, Btn, Card, Empty, Field, Shell, Tabs, Toggle } from '../components/kit';
+import { ACCENT, Badge, Btn, Card, Empty, Field, Shell, Tabs, Toggle } from '../components/kit';
 
 const tableUrl = (token: string) => `${location.origin}/m/${token}`;
 
@@ -174,7 +174,7 @@ export default function Admin() {
 }
 
 function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
-  const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove });
+  const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY' });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
@@ -196,6 +196,23 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
       <Card title="Reglas de solicitudes">
         <div className="grid gap-4">
           <Field label="Canciones en espera por mesa" type="number" min={1} max={20} hint="Cuántas puede tener una mesa a la vez" value={f.maxPendingPerTable} onChange={(e) => setF({ ...f, maxPendingPerTable: Number(e.target.value) })} />
+          <div className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-300">¿Qué pueden buscar los clientes?</span>
+            <div className="grid grid-cols-2 gap-2">
+              {([['KARAOKE', '🎤 Solo karaoke', 'Busca versiones karaoke'], ['ANY', '🎵 Cualquier música', 'Cualquier video de música']] as const).map(([k, title, hint]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setF({ ...f, searchMode: k })}
+                  className="rounded-xl border p-3 text-left transition"
+                  style={f.searchMode === k ? { borderColor: ACCENT, background: ACCENT + '1a' } : { borderColor: 'rgba(255,255,255,.1)' }}
+                >
+                  <span className="block font-semibold">{title}</span>
+                  <span className="block text-xs text-slate-500">{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <Toggle
             checked={!f.autoApprove}
             onChange={(v) => setF({ ...f, autoApprove: !v })}

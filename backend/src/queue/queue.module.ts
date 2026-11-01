@@ -1,6 +1,9 @@
-import { Body, Controller, Get, Module, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsArray, IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Body, Controller, Get, Module, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
+import { PrismaService } from '../prisma/prisma.service';
+import { YoutubeModule } from '../youtube/youtube.module';
+import { YoutubeService } from '../youtube/youtube.service';
 import { QueueService } from './queue.service';
 
 class ReorderDto {
@@ -11,6 +14,18 @@ class ReasonDto {
 }
 class FlagDto {
   @IsBoolean() value: boolean;
+}
+class DjAddDto {
+  @IsString() tableId: string;
+  @Matches(/^[\w-]{11}$/, { message: 'videoId invalido' }) videoId: string;
+  @IsString() @MaxLength(200) title: string;
+  @IsOptional() @IsString() @MaxLength(120) channel?: string;
+  @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
+}
+class HeartbeatDto {
+  @IsOptional() @IsString() requestId?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(36000) positionSec?: number;
 }
 class RequestRefDto {
   @IsString() requestId: string;
@@ -23,7 +38,18 @@ const biz = (u: AuthUser) => u.businessId!;
 @UseGuards(AuthGuard)
 @Roles('DJ', 'ADMIN')
 class DjController {
-  constructor(private q: QueueService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService) {}
+
+  /** Busqueda del DJ, segun la configuracion del bar (solo karaoke / cualquier musica). */
+  @Get('search') async search(@CurrentUser() u: AuthUser, @Query('q') q = '') {
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: biz(u) }, select: { searchMode: true } });
+    return this.yt.searchSongs(q, b.searchMode);
+  }
+  @Post('requests') add(@CurrentUser() u: AuthUser, @Body() d: DjAddDto) {
+    const { tableId, ...song } = d;
+    return this.q.djAddRequest(biz(u), tableId, song);
+  }
+
 
   @Get('queue') queue(@CurrentUser() u: AuthUser) { return this.q.djState(biz(u)); }
   @Post('session/start') start(@CurrentUser() u: AuthUser) { return this.q.startSession(biz(u)); }
@@ -47,10 +73,11 @@ class PlayerController {
   constructor(private q: QueueService) {}
 
   @Get('state') state(@CurrentUser() u: AuthUser) { return this.q.playerState(biz(u)); }
+  @Post('heartbeat') heartbeat(@CurrentUser() u: AuthUser, @Body() b: HeartbeatDto) { return this.q.playerHeartbeat(biz(u), b.requestId, b.positionSec); }
   @Post('next') next(@CurrentUser() u: AuthUser) { return this.q.playerNext(biz(u)); }
   @Post('ended') ended(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerEnded(biz(u), b.requestId); }
   @Post('error') error(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerError(biz(u), b.requestId); }
 }
 
-@Module({ controllers: [DjController, PlayerController], providers: [QueueService], exports: [QueueService] })
+@Module({ imports: [YoutubeModule], controllers: [DjController, PlayerController], providers: [QueueService], exports: [QueueService] })
 export class QueueModule {}

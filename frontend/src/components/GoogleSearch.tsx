@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { pub } from '../lib/api';
 
 /**
  * Respaldo de busqueda: Google Programmable Search Element limitado a youtube.com.
@@ -62,15 +63,35 @@ function idFromLink(a: HTMLAnchorElement): string | undefined {
   }
 }
 
-export default function GoogleSearch({ query, onResults, onError, onPick }: { query: string; onResults: (items: GoogleItem[]) => void; onError: (msg: string) => void; onPick: (item: GoogleItem) => void }) {
+export default function GoogleSearch({ query, mode, onResults, onError, onPick }: { query: string; mode: "KARAOKE" | "ANY"; onResults: (items: GoogleItem[]) => void; onError: (msg: string) => void; onPick: (item: GoogleItem) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     (window as any)[CALLBACK] = (...args: unknown[]) => {
-      onResults(parse(args));
+      const items = parse(args);
+      onResults([]); // hasta verificar, no se muestra nada
+      if (!items.length) return true;
+      // Solo se muestran los videos que la TV puede reproducir
+      pub('GET', `/youtube/validate?ids=${items.map((i) => i.videoId).join(',')}&music=1`)
+        .then((r: { ok: string[] }) => {
+          const ok = new Set(r.ok);
+          onResults(items.filter((i) => ok.has(i.videoId)));
+          // Tambien se ocultan en el bloque propio de Google (los anuncios no se tocan)
+          const hide = () =>
+            box.current?.querySelectorAll('a.gs-title').forEach((a) => {
+              const id = idFromLink(a as HTMLAnchorElement);
+              if (id && !ok.has(id)) (a.closest('.gsc-webResult') as HTMLElement | null)?.style.setProperty('display', 'none');
+            });
+          hide();
+          setTimeout(hide, 400);
+        })
+        .catch(() => onResults(items)); // si falla la verificacion se muestran igual; se valida al pedir
       return true; // deja que Google muestre sus propios resultados
     };
   }, [onResults]);
 
   useEffect(() => {
+    if (!query) return;
     let dead = false;
     loadScript()
       .then(() => {
@@ -78,7 +99,10 @@ export default function GoogleSearch({ query, onResults, onError, onPick }: { qu
         const tryRun = (n = 0) => {
           if (dead) return;
           const el = (window as any).google?.search?.cse?.element?.getElement(GNAME);
-          if (el) el.execute(`${query} karaoke`);
+          if (el) {
+            el.clearAllResults?.(); // que no quede visible lo de la busqueda anterior
+            el.execute(mode === "KARAOKE" ? `${query} karaoke` : query);
+          }
           else if (n < 20) setTimeout(() => tryRun(n + 1), 250);
           else onError('El buscador de Google no respondio');
         };
@@ -90,6 +114,7 @@ export default function GoogleSearch({ query, onResults, onError, onPick }: { qu
 
   return (
     <div
+      ref={box}
       className="karaoke-cse mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-100"
       // Tocar un resultado pide la cancion en vez de abrir YouTube; los anuncios siguen funcionando normal
       onClickCapture={(e) => {
@@ -106,7 +131,7 @@ export default function GoogleSearch({ query, onResults, onError, onPick }: { qu
         });
       }}
     >
-      <div className="mb-1 text-xs text-slate-400">Resultados de Google (respaldo) · toca uno para pedirlo</div>
+      {/* <div className="mb-1 text-xs text-slate-400">Resultados de Google (respaldo) · toca uno para pedirlo</div> */}
       <div className="gcse-searchresults-only" data-gname={GNAME} data-autoSearchOnLoad="false" data-resultsReadyCallback={CALLBACK} />
     </div>
   );

@@ -14,6 +14,11 @@ enum Role {
   DJ
 }
 
+enum SearchMode {
+  KARAOKE
+  ANY
+}
+
 enum BusinessStatus {
   ACTIVE
   SUSPENDED
@@ -43,6 +48,8 @@ model Business {
   status            BusinessStatus @default(ACTIVE)
   maxPendingPerTable Int           @default(2)
   autoApprove       Boolean        @default(false)
+  // KARAOKE: busca versiones karaoke. ANY: cualquier video de musica.
+  searchMode        SearchMode     @default(KARAOKE)
   createdAt         DateTime       @default(now())
 
   users    User[]
@@ -91,6 +98,9 @@ model KaraokeSession {
   paused       Boolean       @default(false)
   // true cuando una persona pulso "Iniciar karaoke" en la TV
   tvStarted    Boolean       @default(false)
+  // Latido de la TV (se guarda en BD para sobrevivir reinicios) y posicion de la cancion actual
+  tvLastSeenAt DateTime?
+  positionSec  Int           @default(0)
   startedAt    DateTime      @default(now())
   endedAt      DateTime?
 

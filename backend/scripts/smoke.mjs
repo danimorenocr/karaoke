@@ -26,6 +26,7 @@ async function makeBar(n) {
   const djEmail = `dj-${n}-${suffix}@t.local`;
   await call('POST', '/admin/staff', { token: admin, body: { name: 'DJ', email: djEmail, password: 'password123' } });
   const dj = await login(djEmail, 'password123');
+  await call('PATCH', '/admin/business', { token: admin, body: { maxPendingPerTable: 3 } });
   const t1 = (await call('POST', '/admin/tables', { token: admin, body: { name: 'Mesa 1' } })).json;
   const t2 = (await call('POST', '/admin/tables', { token: admin, body: { name: 'Mesa 2' } })).json;
   return { id: b.json.id, admin, dj, t1, t2 };
@@ -70,10 +71,19 @@ await call('POST', '/player/next', { token: A.dj });
 st = (await call('GET', '/player/state', { token: A.dj })).json;
 ok(st.current?.id === p2.id && st.next?.id === p1.id, 'TV inicia: suena la primera, siguiente lista');
 
+// latido de la TV: guarda posicion y marca la TV como activa
+await call('POST', '/player/heartbeat', { token: A.dj, body: { requestId: p2.id, positionSec: 42 } });
+st = (await call('GET', '/dj/queue', { token: A.dj })).json;
+ok(st.session.positionSec === 42 && st.tvArmed === true && st.tvConnected === true, 'latido guarda posicion y marca TV activa');
+await call('POST', '/player/heartbeat', { token: A.dj, body: { requestId: 'otra-cancion', positionSec: 99 } });
+st = (await call('GET', '/dj/queue', { token: A.dj })).json;
+ok(st.session.positionSec === 42, 'latido de una cancion que no suena no pisa la posicion');
+
 // "termino" duplicado y simultaneo: solo debe avanzar una vez
 await Promise.all([1, 2, 3].map(() => call('POST', '/player/ended', { token: A.dj, body: { requestId: p2.id } })));
 st = (await call('GET', '/player/state', { token: A.dj })).json;
 ok(st.current?.id === p1.id && st.next === null, 'evento ended repetido avanza una sola vez');
+ok((await call('GET', '/dj/queue', { token: A.dj })).json.session.positionSec === 0, 'cancion nueva arranca en posicion 0');
 
 await call('POST', '/player/error', { token: A.dj, body: { requestId: p1.id } });
 st = (await call('GET', '/dj/queue', { token: A.dj })).json;
