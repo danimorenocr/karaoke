@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "karaoke",
+  "compatibility_date": "2026-10-23",
+  "assets": {
+    "directory": "./dist",
+    // Rutas como /m/<token>, /tv o /dj devuelven index.html (la app React resuelve la ruta)
+    "not_found_handling": "single-page-application"
+  }
+}

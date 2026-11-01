@@ -28,7 +28,9 @@ async function bootstrap() {
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  // "/" y "/health" responden 200: sirven para monitores de uptime y health checks de la plataforma
   app.getHttpAdapter().get('/health', (_req: any, res: any) => res.json({ ok: true }));
+  app.getHttpAdapter().get('/', (_req: any, res: any) => res.json({ ok: true, service: 'karaoke-api' }));
   await seedSuperAdmin(app.get(PrismaService));
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port, '0.0.0.0');
