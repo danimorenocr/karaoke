@@ -59,8 +59,12 @@ export class YoutubeService implements MusicProvider {
 
   private async byId(id: string): Promise<SongSearchResult[]> {
     if (process.env.YOUTUBE_API_KEY) {
-      const items = await this.videos([id]);
-      if (items.length) return items;
+      try {
+        const items = await this.videos([id]);
+        if (items.length) return items;
+      } catch {
+        // Cuota agotada u otro fallo de la API: se valida con oEmbed (no usa cuota)
+      }
     }
     // Sin API key: oEmbed (no requiere clave, sin duracion)
     const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);

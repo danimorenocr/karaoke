@@ -73,6 +73,8 @@ model Table {
   active     Boolean  @default(true)
   // Token aleatorio del QR. Rotarlo revoca el QR anterior.
   qrToken    String   @unique
+  // Al desvincular la mesa, el cliente deja de ver lo pedido antes de esta fecha
+  historyClearedAt DateTime?
   createdAt  DateTime @default(now())
 
   business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)

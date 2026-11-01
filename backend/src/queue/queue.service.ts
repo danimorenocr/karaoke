@@ -92,10 +92,16 @@ export class QueueService {
     const session = await this.activeSession(this.prisma, businessId);
     const business = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
     const base = { business: { name: business.name, autoApprove: business.autoApprove }, tvConnected: this.rt.tvCount(businessId) > 0 };
-    if (!session) return { ...base, session: null, current: null, queue: [], pending: [], history: [] };
+    if (!session) return { ...base, session: null, current: null, queue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
-    const [current, queue, pending, history] = await Promise.all([
+    const [tableRows, active, current, queue, pending, history] = await Promise.all([
+      this.prisma.table.findMany({ where: { businessId, active: true }, select: { id: true, name: true }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.songRequest.groupBy({
+        by: ['tableId'],
+        where: { sessionId: session.id, status: { in: ['PENDING', 'APPROVED'] } },
+        _count: { _all: true },
+      }),
       this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
       this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED' }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
       this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'PENDING' }, include, orderBy: { position: 'asc' } }),
@@ -114,6 +120,10 @@ export class QueueService {
       queue: queue.map((r) => this.view(r)),
       pending: pending.map((r) => this.view(r)),
       history: history.map((r) => this.view(r)),
+      // Mesas con canciones en espera primero (para poder desvincularlas)
+      tables: tableRows
+        .map((t) => ({ id: t.id, name: t.name, waiting: active.find((a) => a.tableId === t.id)?._count._all ?? 0 }))
+        .sort((a, b) => b.waiting - a.waiting),
     };
   }
 
@@ -150,7 +160,13 @@ export class QueueService {
     const [current, queue, mine] = await Promise.all([
       this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
       this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED' }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
-      this.prisma.songRequest.findMany({ where: { sessionId: session.id, tableId: table.id }, include, orderBy: { requestedAt: 'desc' }, take: 20 }),
+      this.prisma.songRequest.findMany({
+        // Tras "desvincular", la mesa empieza de cero: no ve lo pedido antes
+        where: { sessionId: session.id, tableId: table.id, ...(table.historyClearedAt ? { requestedAt: { gt: table.historyClearedAt } } : {}) },
+        include,
+        orderBy: { requestedAt: 'desc' },
+        take: 20,
+      }),
     ]);
     // El cliente no necesita saber la razon interna ni ids de otras mesas; solo nombre de mesa.
     out.current = current && this.view(current);
@@ -255,6 +271,22 @@ export class QueueService {
   }
 
   // ---------- DJ ----------
+
+  /** Desvincula una mesa: cancela sus canciones en espera (pendientes y en cola). La que suena ahora no se corta. */
+  unlinkTable(businessId: string, tableId: string) {
+    return this.locked(businessId, async (tx) => {
+      const table = await tx.table.findFirst({ where: { id: tableId, businessId } });
+      if (!table) throw new NotFoundException('Mesa no encontrada');
+      const s = await this.activeSession(tx, businessId);
+      await tx.table.update({ where: { id: tableId }, data: { historyClearedAt: new Date() } });
+      if (!s) return { removed: 0 };
+      const r = await tx.songRequest.updateMany({
+        where: { sessionId: s.id, tableId, status: { in: WAITING } },
+        data: { status: 'CANCELLED', rejectionReason: 'Mesa desvinculada', completedAt: new Date() },
+      });
+      return { removed: r.count };
+    });
+  }
 
   approve(businessId: string, id: string) {
     return this.locked(businessId, async (tx) => {

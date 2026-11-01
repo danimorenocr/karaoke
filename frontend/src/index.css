@@ -8,3 +8,16 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 .btn-ok { @apply bg-emerald-700 hover:bg-emerald-600; }
 .card { @apply rounded-xl border border-zinc-800 bg-zinc-900 p-4; }
 .input { @apply w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-pink-500; }
+
+/* Nombre del bar en la TV entre canciones: respira y brilla */
+.tv-brand {
+  background: linear-gradient(110deg, #f9a8d4 20%, #ffffff 40%, #67e8f9 60%, #f9a8d4 80%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: tv-shine 3s linear infinite, tv-breathe 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 24px rgba(236, 72, 153, 0.45));
+}
+@keyframes tv-shine { to { background-position: -250% 0; } }
+@keyframes tv-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }

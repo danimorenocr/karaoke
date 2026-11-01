@@ -35,6 +35,9 @@ export default function Tv() {
   const [blocked, setBlocked] = useState(false);
   const [online, setOnline] = useState(true);
   const [err, setErr] = useState('');
+  const [playing, setPlaying] = useState(false); // el video actual ya empezo a sonar
+  const [finishedId, setFinishedId] = useState<string | null>(null); // ultima cancion que termino
+  const [slow, setSlow] = useState(false); // el video tarda mucho: se quita el aviso para no ocultar un posible error
 
   const playerRef = useRef<any>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -64,12 +67,15 @@ export default function Tv() {
     if (!cur) {
       if (loadedId.current) p.stopVideo?.();
       loadedId.current = null;
+      setPlaying(false);
       return;
     }
     if (cur.id !== loadedId.current || forceReload) {
       loadedId.current = cur.id;
       reported.current = null;
       setBlocked(false);
+      setPlaying(false);
+      setSlow(false);
       p.loadVideoById(cur.videoId);
       lastPaused.current = false;
     }
@@ -105,8 +111,18 @@ export default function Tv() {
         events: {
           onReady: () => load(),
           onStateChange: (e: any) => {
-            if (e.data === window.YT.PlayerState.ENDED) report('ended');
-            if (e.data === window.YT.PlayerState.PLAYING) setBlocked(false);
+            if (e.data === window.YT.PlayerState.ENDED) {
+              setPlaying(false);
+              setFinishedId(loadedId.current);
+              report('ended');
+            }
+            if (e.data === window.YT.PlayerState.PLAYING) { setBlocked(false); setPlaying(true); }
+            // Pausa que no vino del DJ (p.ej. el navegador pausa al ocultar la pestana): reanudar.
+            if (e.data === window.YT.PlayerState.PAUSED && armedRef.current && loadedId.current && !lastPaused.current) {
+              setTimeout(() => {
+                if (!lastPaused.current && playerRef.current?.getPlayerState?.() === window.YT.PlayerState.PAUSED) playerRef.current.playVideo();
+              }, 300);
+            }
           },
           onError: () => report('error'), // video eliminado / no incrustable / etc.
           onAutoplayBlocked: () => setBlocked(true),
@@ -123,7 +139,15 @@ export default function Tv() {
       if (name === 'playback.reload' && stateRef.current) sync(stateRef.current, true);
     });
     const poll = setInterval(load, 15000); // recuperacion si se pierde algun evento
+    // Al volver a la pestana, asegura que el video siga sonando si no esta en pausa
+    const onVisible = () => {
+      const p = playerRef.current;
+      if (!document.hidden && armedRef.current && loadedId.current && !lastPaused.current && p?.getPlayerState?.() === window.YT.PlayerState.PAUSED) p.playVideo();
+      if (!document.hidden) load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       dead = true;
       off();
       clearInterval(poll);
@@ -148,11 +172,25 @@ export default function Tv() {
   const cur = state?.current;
   const noSession = state && !state.session;
   const idle = !cur;
+  // Aviso entre canciones: se muestra hasta que el video nuevo empieza a sonar
+  const transition = armed && !!cur && !playing && !blocked && !slow;
+  useEffect(() => {
+    if (!transition) return;
+    const t = setTimeout(() => setSlow(true), 15000);
+    return () => clearTimeout(t);
+  }, [transition, cur?.id]);
 
   return (
     <div className="fixed inset-0 bg-black text-white">
       <div className="absolute inset-0">
         <div ref={hostRef} className="absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full" />
+
+        {/* Entre canciones: nombre del bar mientras carga el siguiente video */}
+        <div
+          className={`pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-6 bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-zinc-950 p-8 text-center transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
+        >
+          <div className="tv-brand text-7xl font-extrabold md:text-9xl">{state?.business?.name ?? 'Karaoke'}</div>
+        </div>
 
         {(!armed || idle || blocked) && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-zinc-950 p-8 text-center">
