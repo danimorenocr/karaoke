@@ -1,8 +1,9 @@
 import { Global, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { AuthGuard } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
+import { MetricsService } from '../stats/metrics.service';
 
 const origins = () => (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim());
 
@@ -20,7 +21,7 @@ const origins = () => (process.env.CORS_ORIGINS ?? 'http://localhost:5173').spli
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   @WebSocketServer() server: Server;
   private keepAlive?: NodeJS.Timeout;
-  constructor(private prisma: PrismaService, private auth: AuthGuard) {}
+  constructor(private prisma: PrismaService, private auth: AuthGuard, private metrics: MetricsService) {}
 
   /**
    * Mientras haya alguien conectado, un SELECT 1 cada 3 min evita que Neon suspenda la BD
@@ -48,10 +49,11 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       } else if (token) {
         const u = await this.auth.verify(String(token));
         businessId = u.businessId;
-        if (businessId && role === 'tv') await socket.join(`tv:${businessId}`);
+        // La sala de TV ya no se une al conectar: se une al pulsar "Iniciar karaoke" (evento tv.claim)
       }
       if (!businessId) return socket.disconnect(true);
       socket.data.businessId = businessId;
+      this.metrics.socketConnected();
       await socket.join(`biz:${businessId}`);
       if (role === 'tv') this.emitTvStatus(businessId);
     } catch {
@@ -59,13 +61,37 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  /**
+   * La pantalla que pulsa "Iniciar karaoke" toma el control: las demas TV del bar se desconectan y se detienen.
+   * Asi nunca suenan dos reproductores a la vez (ni el DJ puede dejar la TV muda abriendo otra pestaña sin iniciarla).
+   */
+  @SubscribeMessage('tv.claim')
+  async claimTv(@ConnectedSocket() socket: Socket) {
+    const businessId = socket.data.businessId as string | undefined;
+    if (!businessId) return;
+    const room = `tv:${businessId}`;
+    const others = (await this.server.in(room).fetchSockets()).filter((s) => s.id !== socket.id);
+    others.forEach((s) => { s.emit('tv.replaced'); s.disconnect(true); });
+    await socket.join(room);
+    this.emitTvStatus(businessId);
+  }
+
   handleDisconnect(socket: Socket) {
     const id = socket.data.businessId;
+    if (id) this.metrics.socketDisconnected();
     if (id) setTimeout(() => this.emitTvStatus(id), 300);
   }
 
   tvCount(businessId: string) {
     return this.server.sockets.adapter.rooms.get(`tv:${businessId}`)?.size ?? 0;
+  }
+
+  /** Conexiones abiertas ahora mismo (todas las salas). */
+  stats() {
+    const rooms = this.server.sockets.adapter.rooms;
+    let tvScreens = 0;
+    rooms.forEach((set, name) => { if (name.startsWith('tv:')) tvScreens += set.size; });
+    return { connected: this.server.engine?.clientsCount ?? 0, tvScreens };
   }
 
   private emitTvStatus(businessId: string) {
@@ -91,6 +117,9 @@ export class RealtimeService {
   }
   tvCount(businessId: string) {
     return this.gw.tvCount(businessId);
+  }
+  stats() {
+    return this.gw.stats();
   }
 }
 

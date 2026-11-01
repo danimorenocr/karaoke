@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api } from '../lib/api';
 import { useAction, useToast } from '../components/ui';
+import StatsPanel from '../components/StatsPanel';
 import { ACCENT, Badge, Btn, Card, Empty, Field, Shell, Tabs, Toggle } from '../components/kit';
 
 const tableUrl = (token: string) => `${location.origin}/m/${token}`;
@@ -32,10 +33,10 @@ async function downloadQr(name: string, token: string, kind: 'png' | 'svg') {
   a.click();
 }
 
-type Tab = 'tables' | 'settings' | 'staff' | 'history';
+type Tab = 'stats' | 'tables' | 'settings' | 'staff' | 'history';
 
 export default function Admin() {
-  const [tab, setTab] = useState<Tab>('tables');
+  const [tab, setTab] = useState<Tab>('stats');
   const [biz, setBiz] = useState<any>(null);
   const [tables, setTables] = useState<any[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
@@ -59,8 +60,10 @@ export default function Admin() {
       <Tabs
         value={tab}
         onChange={setTab}
-        items={[['tables', `Mesas y QR (${tables.length})`], ['settings', 'Configuración'], ['staff', 'DJs'], ['history', 'Historial']]}
+        items={[['stats', '📊 Estadísticas'], ['tables', `Mesas y QR (${tables.length})`], ['settings', 'Configuración'], ['staff', 'DJs'], ['history', 'Historial']]}
       />
+
+      {tab === 'stats' && <StatsPanel />}
 
       {tab === 'tables' && (
         <div className="space-y-6">

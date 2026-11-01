@@ -57,3 +57,25 @@ export function useAction(toast: (t: string, e?: boolean) => void) {
     }
   };
 }
+
+/** Fila "fantasma" que se muestra mientras cargan los resultados de busqueda. */
+export function SkeletonRow() {
+  return (
+    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2" aria-hidden>
+      <div className="h-14 w-14 shrink-0 rounded-lg bg-white/10" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="h-3.5 w-4/5 rounded bg-white/10" />
+        <div className="h-3 w-2/5 rounded bg-white/10" />
+      </div>
+      <div className="h-11 w-11 shrink-0 rounded-full bg-white/10" />
+    </div>
+  );
+}
+
+export function SkeletonList({ rows = 4 }: { rows?: number }) {
+  return (
+    <div className="space-y-2" role="status" aria-label="Buscando canciones">
+      {Array.from({ length: rows }, (_, i) => <SkeletonRow key={i} />)}
+    </div>
+  );
+}

@@ -12,6 +12,43 @@ const Stat = ({ label, value }: { label: string; value: number | string }) => (
   </div>
 );
 
+const dur = (sec: number) => (sec < 3600 ? `${Math.floor(sec / 60)} min` : sec < 86400 ? `${(sec / 3600).toFixed(1)} h` : `${(sec / 86400).toFixed(1)} días`);
+
+function Health() {
+  const [m, setM] = useState<any>(null);
+  useEffect(() => {
+    const load = () => api('GET', '/super/metrics').then(setM).catch(() => {});
+    load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, []);
+  if (!m) return null;
+  const quotaPct = Math.min(100, Math.round((m.youtube.estimatedUnits / m.youtube.dailyQuota) * 100));
+  const rows: [string, string, boolean?][] = [
+    ['Tiempo encendido', dur(m.uptimeSec)],
+    ['Base de datos', m.database.ok ? `${m.database.ms} ms` : 'SIN RESPUESTA', !m.database.ok],
+    ['Conexiones en vivo', `${m.sockets.connected} (${m.sockets.tvScreens} TV)`],
+    [`Latencia (últ. ${m.windowMin} min)`, `p50 ${m.latencyMs.p50} · p95 ${m.latencyMs.p95} · p99 ${m.latencyMs.p99} ms`, m.latencyMs.p95 > 1500],
+    ['Peticiones / errores 4xx / 5xx', `${m.requests} / ${m.errors4xx} / ${m.errors5xx}`, m.errors5xx > 0],
+    ['Desconexiones de sockets', `${m.socket.disconnectsSinceStart} de ${m.socket.connectsSinceStart} conexiones`],
+    ['Memoria del servidor', `${m.memoryMb} MB`],
+    ['Cuota YouTube hoy (estimada)', `${m.youtube.estimatedUnits} / ${m.youtube.dailyQuota} (${quotaPct}%)${m.youtube.blocked ? ' · BLOQUEADA' : ''}`, quotaPct >= 80 || m.youtube.blocked],
+  ];
+  return (
+    <Card title="Salud de la plataforma" right={<Badge tone={m.database.ok && m.errors5xx === 0 ? 'green' : 'red'}>{m.database.ok && m.errors5xx === 0 ? 'Todo en orden' : 'Revisar'}</Badge>} className="mb-6">
+      <dl className="grid gap-x-8 gap-y-3 text-sm md:grid-cols-2">
+        {rows.map(([k, v, bad]) => (
+          <div key={k} className="flex justify-between gap-4 border-b border-white/5 pb-2">
+            <dt className="text-slate-400">{k}</dt>
+            <dd className={`text-right font-medium ${bad ? 'text-red-300' : ''}`}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 text-xs text-slate-500">Se calcula en memoria: se reinicia con cada despliegue y se actualiza cada 15 s.</p>
+    </Card>
+  );
+}
+
 export default function SuperAdmin() {
   const [list, setList] = useState<any[] | null>(null);
   const [f, setF] = useState(EMPTY);
@@ -32,6 +69,8 @@ export default function SuperAdmin() {
         <Stat label="Usuarios" value={sum('users')} />
         <Stat label="Solicitudes" value={sum('requests')} />
       </div>
+
+      <Health />
 
       <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
         <Card title="Nuevo establecimiento">

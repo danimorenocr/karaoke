@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.service';
 import { PublicModule } from './public/public.module';
 import { QueueModule } from './queue/queue.module';
 import { RealtimeModule } from './realtime/realtime.gateway';
+import { StatsModule } from './stats/stats.module';
 import { YoutubeModule } from './youtube/youtube.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { YoutubeModule } from './youtube/youtube.module';
     PublicModule,
     AdminModule,
     YoutubeModule,
+    StatsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

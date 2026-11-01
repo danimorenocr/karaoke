@@ -38,6 +38,25 @@ export class YoutubeService implements MusicProvider {
   private log = new Logger('Youtube');
   private cache = new Map<string, { at: number; data: SongSearchResult[] }>();
   private quotaBlockedUntil = 0;
+  private use = { day: '', searches: 0, videos: 0 };
+
+  /** Consumo estimado de cuota de hoy (en memoria; se reinicia al desplegar). search.list = 100 unidades, videos.list = 1. */
+  usage() {
+    this.rollDay();
+    return {
+      day: this.use.day,
+      searchCalls: this.use.searches,
+      videoCalls: this.use.videos,
+      estimatedUnits: this.use.searches * 100 + this.use.videos,
+      dailyQuota: 10_000,
+      blocked: Date.now() < this.quotaBlockedUntil,
+    };
+  }
+
+  private rollDay() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.use.day !== today) this.use = { day: today, searches: 0, videos: 0 };
+  }
 
   /** mode KARAOKE: versiones karaoke. ANY: cualquier video de musica. */
   async searchSongs(query: string, mode: 'KARAOKE' | 'ANY' = 'KARAOKE'): Promise<SongSearchResult[]> {
@@ -165,6 +184,9 @@ export class YoutubeService implements MusicProvider {
   }
 
   private async call(url: URL) {
+    this.rollDay();
+    if (url.pathname.endsWith('/search')) this.use.searches++;
+    else this.use.videos++;
     const r = await fetch(url);
     if (r.ok) return r.json();
     const body: any = await r.json().catch(() => ({}));

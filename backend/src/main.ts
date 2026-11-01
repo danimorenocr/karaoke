@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma/prisma.service';
+import { MetricsService } from './stats/metrics.service';
 
 async function seedSuperAdmin(prisma: PrismaService) {
   const email = process.env.SUPERADMIN_EMAIL?.toLowerCase();
@@ -26,6 +27,16 @@ async function bootstrap() {
   app.enableCors({
     origin: (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((s) => s.trim()),
     credentials: true,
+  });
+  // Latencia y codigos HTTP de cada peticion (alimenta el panel tecnico del super admin)
+  const metrics = app.get(MetricsService);
+  app.use((req: any, res: any, next: () => void) => {
+    const t = process.hrtime.bigint();
+    res.on('finish', () => {
+      if (req.path === '/health' || req.path === '/') return;
+      metrics.recordRequest(Number(process.hrtime.bigint() - t) / 1e6, res.statusCode);
+    });
+    next();
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   // "/" y "/health" responden 200: sirven para monitores de uptime y health checks de la plataforma

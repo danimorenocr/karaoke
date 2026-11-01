@@ -63,7 +63,7 @@ export const pub = <T = any>(method: string, path: string, body?: unknown) => ap
 export function connectSocket(
   opts: { tableToken?: string; role?: 'tv' | 'dj' },
   onEvent: (name: string, payload?: any) => void,
-): () => void {
+): (() => void) & { emit: (event: string, ...args: unknown[]) => void } {
   const socket: Socket = io(API_URL, {
     auth: opts.tableToken ? { tableToken: opts.tableToken } : { token: auth.token(), role: opts.role },
     // Reconexion automatica y sin limite de intentos (el wifi del bar puede caerse un rato)
@@ -73,14 +73,29 @@ export function connectSocket(
     reconnectionDelayMax: 5000,
     timeout: 10000,
   });
-  ['queue.updated', 'playback.paused', 'playback.resumed', 'playback.reload', 'tv.status'].forEach((e) =>
+  ['queue.updated', 'playback.paused', 'playback.resumed', 'playback.reload', 'tv.status', 'tv.replaced'].forEach((e) =>
     socket.on(e, (p) => onEvent(e, p)),
   );
   socket.on('connect', () => onEvent('connect'));
   socket.on('disconnect', () => onEvent('disconnect'));
-  return () => {
+  const off = () => {
     socket.disconnect();
   };
+  return Object.assign(off, { emit: (event: string, ...args: unknown[]) => { socket.emit(event, ...args); } });
 }
 
 export const fmtDuration = (s?: number | null) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '');
+
+/** Id anonimo y aleatorio del navegador (no identifica personas): permite medir recurrencia y conversion. */
+export function clientId(): string {
+  try {
+    let id = localStorage.getItem('karaoke_cid');
+    if (!id) {
+      id = (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 36);
+      localStorage.setItem('karaoke_cid', id);
+    }
+    return id;
+  } catch {
+    return 'anon';
+  }
+}

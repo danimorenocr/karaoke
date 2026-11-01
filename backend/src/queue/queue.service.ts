@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, RequestStatus, SongRequest } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.gateway';
+import { EventsService } from '../stats/events.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -11,6 +12,7 @@ export interface NewRequestInput {
   channel?: string;
   thumbnail?: string;
   durationSec?: number;
+  clientId?: string; // id anonimo del navegador (para medir recurrencia); no es un dato personal
 }
 
 const WAITING: RequestStatus[] = ['PENDING', 'APPROVED'];
@@ -25,7 +27,7 @@ const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED
  */
 @Injectable()
 export class QueueService {
-  constructor(private prisma: PrismaService, private rt: RealtimeService) {}
+  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService) {}
 
   // ---------- helpers ----------
 
@@ -64,6 +66,7 @@ export class QueueService {
     if (next) {
       await tx.songRequest.update({ where: { id: next.id }, data: { status: 'PLAYING', startedAt: new Date() } });
       await tx.karaokeSession.update({ where: { id: sessionId }, data: { positionSec: 0 } }); // cancion nueva: empieza desde 0
+      this.events.record({ businessId: next.businessId, sessionId, tableId: next.tableId, type: 'PLAYBACK_STARTED', metadata: { requestId: next.id, videoId: next.videoId } });
     }
   }
 
@@ -265,10 +268,18 @@ export class QueueService {
           durationSec: input.durationSec,
           position: (last._max.position ?? 0) + 1,
           status: business.autoApprove ? 'APPROVED' : 'PENDING',
+          approvedAt: business.autoApprove ? new Date() : null,
         },
         include: { table: { select: { name: true } } },
       });
-      if (business.autoApprove) await this.promote(tx, session.id);
+      this.events.record({
+        businessId: business.id, sessionId: session.id, tableId: table.id, type: 'REQUEST_CREATED',
+        metadata: { requestId: created.id, videoId: input.videoId, title: created.title, channel: created.channel, source: 'client', clientId: input.clientId, autoApproved: business.autoApprove },
+      });
+      if (business.autoApprove) {
+        this.events.record({ businessId: business.id, sessionId: session.id, tableId: table.id, type: 'REQUEST_APPROVED', metadata: { requestId: created.id, auto: true } });
+        await this.promote(tx, session.id);
+      }
       return this.view(created);
     });
   }
@@ -308,7 +319,8 @@ export class QueueService {
     return this.locked(businessId, async (tx) => {
       const r = await this.getOwned(tx, businessId, id);
       if (r.status !== 'PENDING') throw new ConflictException('La solicitud no esta pendiente');
-      await tx.songRequest.update({ where: { id }, data: { status: 'APPROVED' } });
+      await tx.songRequest.update({ where: { id }, data: { status: 'APPROVED', approvedAt: new Date() } });
+      this.events.record({ businessId, sessionId: r.sessionId, tableId: r.tableId, type: 'REQUEST_APPROVED', metadata: { requestId: id } });
       await this.promote(tx, r.sessionId);
       return { ok: true };
     });
@@ -319,6 +331,7 @@ export class QueueService {
       const r = await this.getOwned(tx, businessId, id);
       if (!WAITING.includes(r.status)) throw new ConflictException('La solicitud ya no esta en espera');
       await tx.songRequest.update({ where: { id }, data: { status: 'REJECTED', rejectionReason: reason?.slice(0, 200), completedAt: new Date() } });
+      this.events.record({ businessId, sessionId: r.sessionId, tableId: r.tableId, type: 'REQUEST_REJECTED', metadata: { requestId: id, reason: reason?.slice(0, 200) } });
       return { ok: true };
     });
   }
@@ -359,8 +372,13 @@ export class QueueService {
           durationSec: input.durationSec,
           position: (last._max.position ?? 0) + 1,
           status: 'APPROVED',
+          approvedAt: new Date(),
         },
         include: { table: { select: { name: true } } },
+      });
+      this.events.record({
+        businessId, sessionId: session.id, tableId: table.id, type: 'REQUEST_CREATED',
+        metadata: { requestId: created.id, videoId: input.videoId, title: created.title, channel: created.channel, source: 'dj' },
       });
       await this.promote(tx, session.id);
       return this.view(created);
@@ -372,7 +390,10 @@ export class QueueService {
     return this.locked(businessId, async (tx) => {
       const s = await this.requireActiveSession(tx, businessId);
       const cur = await tx.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' } });
-      if (cur) await tx.songRequest.update({ where: { id: cur.id }, data: { status: 'CANCELLED', completedAt: new Date() } });
+      if (cur) {
+        await tx.songRequest.update({ where: { id: cur.id }, data: { status: 'CANCELLED', completedAt: new Date() } });
+        this.events.record({ businessId, sessionId: s.id, tableId: cur.tableId, type: 'PLAYBACK_SKIPPED', metadata: { requestId: cur.id, videoId: cur.videoId, atSec: s.positionSec } });
+      }
       await tx.karaokeSession.update({ where: { id: s.id }, data: { paused: false } });
       await this.promote(tx, s.id);
       return { ok: true };
@@ -389,7 +410,7 @@ export class QueueService {
       const min = await tx.songRequest.aggregate({ where: { sessionId: s.id, status: { in: ['APPROVED', 'PLAYING'] } }, _min: { position: true } });
       await tx.songRequest.update({
         where: { id },
-        data: { status: 'APPROVED', position: (min._min.position ?? 1) - 1, startedAt: null, completedAt: null },
+        data: { status: 'APPROVED', approvedAt: new Date(), position: (min._min.position ?? 1) - 1, startedAt: null, completedAt: null },
       });
       await this.promote(tx, s.id);
       return { ok: true };
@@ -442,6 +463,7 @@ export class QueueService {
       const cur = await tx.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' } });
       if (!cur || cur.id !== requestId) return { ok: true, ignored: true };
       await tx.songRequest.update({ where: { id: cur.id }, data: { status, completedAt: new Date() } });
+      this.events.record({ businessId, sessionId: s.id, tableId: cur.tableId, type: status === 'COMPLETED' ? 'PLAYBACK_COMPLETED' : 'PLAYBACK_FAILED', metadata: { requestId: cur.id, videoId: cur.videoId } });
       await tx.karaokeSession.update({ where: { id: s.id }, data: { paused: false } });
       await this.promote(tx, s.id);
       return { ok: true };

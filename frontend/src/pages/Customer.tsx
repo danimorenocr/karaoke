@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { connectSocket, fmtDuration, pub } from '../lib/api';
-import { Thumb, useAction, useToast } from '../components/ui';
+import { clientId, connectSocket, fmtDuration, pub } from '../lib/api';
+import { SkeletonList, Thumb, useAction, useToast } from '../components/ui';
 import GoogleSearch, { GOOGLE_CSE_ID, GoogleItem } from '../components/GoogleSearch';
 
 const STATUS: Record<string, [string, string]> = {
@@ -47,8 +47,14 @@ export default function Customer() {
   const [busyVideo, setBusyVideo] = useState<string | null>(null);
   const [googleQuery, setGoogleQuery] = useState(''); // si no esta vacio, se usa el respaldo de Google
   const [sort, setSort] = useState<'views' | 'relevance'>('views');
+  // Valoracion opcional: se pide como maximo una vez al dia por navegador, y solo despues de oir una cancion
+  const today = new Date().toISOString().slice(0, 10);
+  const [fbDone, setFbDone] = useState(() => { try { return localStorage.getItem('karaoke_fb') === today; } catch { return false; } });
+  const [fbThanks, setFbThanks] = useState(false);
   const [googleEver, setGoogleEver] = useState(false);
   const [googleItems, setGoogleItems] = useState<GoogleItem[]>([]);
+  const [pending, setPending] = useState<{ song: any; source: 'api' | 'google' } | null>(null); // cancion elegida, esperando confirmacion
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [adding, setAdding] = useState<any>(null); // cancion que se esta enviando (aviso mientras responde el servidor)
   const [msgIdx, setMsgIdx] = useState(0);
 
@@ -68,6 +74,15 @@ export default function Customer() {
     } catch (e: any) {
       if (e.status === 404) setInvalid(true);
     }
+  }, [token]);
+
+  // Cuenta un escaneo por visita (no por cada refresco de datos)
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(`karaoke_scan_${token}`)) return;
+      sessionStorage.setItem(`karaoke_scan_${token}`, '1');
+    } catch { /* sin storage: se cuenta igual */ }
+    pub('POST', `/public/${token}/scan`, { clientId: clientId() }).catch(() => {});
   }, [token]);
 
   useEffect(() => {
@@ -162,6 +177,7 @@ export default function Customer() {
           channel: s.channelTitle,
           thumbnail: s.thumbnail,
           durationSec: s.durationSec,
+          clientId: clientId(),
         });
         setSentId(r.id);
         // Cancion en cola: buscador limpio para la siguiente
@@ -191,6 +207,16 @@ export default function Customer() {
       setBusyVideo(null);
       await request(verified ?? { videoId: g.videoId, title: g.title, thumbnail: g.thumbnail, channelTitle: '' });
     });
+
+  /** Elegir una cancion abre la confirmacion; solo se envia al pulsar "Sí, pedirla". */
+  const ask = (song: any, source: 'api' | 'google') => setPending({ song, source });
+  const confirmPending = () => {
+    if (!pending) return;
+    const { song, source } = pending;
+    setPending(null);
+    if (source === 'google') requestGoogle(song);
+    else request(song);
+  };
 
   const tabs: [View, string, ReactNode][] = [
     ['home', 'Inicio', icons.home],
@@ -274,7 +300,7 @@ export default function Customer() {
             {q.trim() && (
               <div className="mt-4 space-y-2">
                 {q.trim().length < 3 && <p className="text-sm text-slate-500">Escribe al menos 3 letras…</p>}
-                {searching && <p className="text-sm text-slate-400">Buscando…</p>}
+                {(searching || (googleQuery && googleLoading && googleItems.length === 0)) && <SkeletonList />}
                 {searchError && <p className="text-sm text-red-400">{searchError}</p>}
                 {!searching && !searchError && !googleQuery && q.trim().length >= 3 && results.length === 0 && lastQuery.current && (
                   <p className="text-sm text-slate-500">Sin resultados.</p>
@@ -307,7 +333,7 @@ export default function Customer() {
                       <button
                         aria-label={done ? 'Ya solicitada' : 'Pedir canción'}
                         disabled={disabled}
-                        onClick={() => request(s)}
+                        onClick={() => ask(s, 'api')}
                         className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 transition active:scale-95 disabled:opacity-40"
                         style={done ? { background: accent, color: '#04202a' } : undefined}
                       >
@@ -327,7 +353,7 @@ export default function Customer() {
                           <button
                             aria-label="Pedir canción"
                             disabled={!!closed || full || done || busyVideo === g.videoId}
-                            onClick={() => requestGoogle(g)}
+                            onClick={() => ask(g, 'google')}
                             className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 transition active:scale-95 disabled:opacity-40"
                             style={done ? { background: accent, color: '#04202a' } : undefined}
                           >
@@ -345,7 +371,7 @@ export default function Customer() {
             {/* Una vez usado, el bloque de Google queda montado y solo se oculta cuando no hay busqueda de respaldo */}
             {googleEver && (
               <div className={googleQuery && q.trim() ? '' : 'hidden'}>
-                <GoogleSearch query={googleQuery} mode={state.business.searchMode} onResults={setGoogleItems} onError={setSearchError} onPick={(g) => closed ? toast(closed, true) : full ? toast(`Tu mesa ya tiene ${waitingCount} canciones sin terminar (máximo ${state.maxPending}).`, true) : requestedIds.has(g.videoId) ? toast('Ya pediste esta canción', true) : requestGoogle(g)} />
+                <GoogleSearch query={googleQuery} mode={state.business.searchMode} onResults={setGoogleItems} onError={setSearchError} onLoading={setGoogleLoading} onPick={(g) => closed ? toast(closed, true) : full ? toast(`Tu mesa ya tiene ${waitingCount} canciones sin terminar (máximo ${state.maxPending}).`, true) : requestedIds.has(g.videoId) ? toast('Ya pediste esta canción', true) : ask(g, 'google')} />
               </div>
             )}
           </main>
@@ -434,6 +460,35 @@ export default function Customer() {
         </div>
       )}
 
+      {/* Valoracion breve y opcional */}
+      {!adding && !sent && !fbDone && state.mine.some((r: any) => r.status === 'COMPLETED') && (
+        <div className="fixed inset-x-4 bottom-[4.9rem] z-20 mx-auto max-w-md rounded-2xl border border-white/10 bg-[#0b1624]/95 p-3 backdrop-blur">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <span className="font-semibold">¿Cómo va tu experiencia?</span>
+            <button className="text-xs text-slate-500" onClick={() => { setFbDone(true); try { localStorage.setItem('karaoke_fb', today); } catch { /* */ } }}>Ahora no</button>
+          </div>
+          <div className="mt-2 flex justify-between">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                aria-label={`${n} de 5`}
+                className="text-3xl transition active:scale-90"
+                onClick={() => {
+                  pub('POST', `/public/${token}/feedback`, { rating: n, clientId: clientId() }).catch(() => {});
+                  setFbDone(true);
+                  setFbThanks(true);
+                  setTimeout(() => setFbThanks(false), 3500);
+                  try { localStorage.setItem('karaoke_fb', today); } catch { /* */ }
+                }}
+              >
+                ⭐
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {fbThanks && <div className="fixed inset-x-4 bottom-[4.9rem] z-20 mx-auto max-w-md rounded-2xl bg-emerald-600/90 p-3 text-center text-sm font-semibold">¡Gracias por tu opinión! 🎤</div>}
+
       {/* Aviso inferior: solicitud enviada */}
       {sent && !adding && (
         <button
@@ -472,6 +527,31 @@ export default function Customer() {
           })}
         </div>
       </nav>
+      {/* Confirmacion antes de pedir */}
+      {pending && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center" onClick={() => setPending(null)} role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0b1624] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold">¿Pedir esta canción?</h2>
+            <div className="mt-4 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <Thumb src={pending.song.thumbnail} className="h-16 w-16" />
+              <div className="min-w-0">
+                <div className="line-clamp-3 font-semibold leading-tight">{pending.song.title}</div>
+                {(pending.song.channelTitle || pending.song.durationSec) && (
+                  <div className="mt-1 truncate text-xs text-slate-400">{pending.song.channelTitle} {fmtDuration(pending.song.durationSec)}</div>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-slate-400">
+              Se agregará a la cola a nombre de <b className="text-slate-200">{state.table.name}</b>
+              {state.maxPending ? ` (${waitingCount + 1} de ${state.maxPending} permitidas).` : '.'}
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button className="rounded-xl bg-white/10 py-3 font-semibold" onClick={() => setPending(null)}>Cancelar</button>
+              <button className="rounded-xl py-3 font-semibold text-[#04202a]" style={{ background: accent }} onClick={confirmPending}>Sí, pedirla</button>
+            </div>
+          </div>
+        </div>
+      )}
       {node}
     </div>
   );

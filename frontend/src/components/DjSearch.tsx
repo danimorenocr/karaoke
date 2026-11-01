@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, fmtDuration, pub } from '../lib/api';
-import { Thumb } from './ui';
+import { SkeletonList, Thumb } from './ui';
 import { ACCENT, Btn, Card } from './kit';
 import GoogleSearch, { GOOGLE_CSE_ID, GoogleItem } from './GoogleSearch';
 
@@ -22,6 +22,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
   const [sort, setSort] = useState<'views' | 'relevance'>('views');
   const [tableId, setTableId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [adding, setAdding] = useState<string | null>(null); // titulo de la cancion que se esta agregando
   const [googleQuery, setGoogleQuery] = useState('');
   const [googleEver, setGoogleEver] = useState(false);
   const [googleItems, setGoogleItems] = useState<GoogleItem[]>([]);
@@ -68,6 +69,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
   const add = async (s: { videoId: string; title: string; channelTitle?: string; thumbnail?: string; durationSec?: number }) => {
     if (!tableId) return toast('Crea al menos una mesa para poder agregar canciones', true);
     setBusy(s.videoId);
+    setAdding(s.title);
     try {
       await api('POST', '/dj/requests', {
         tableId, videoId: s.videoId, title: s.title, channel: s.channelTitle || undefined, thumbnail: s.thumbnail || undefined, durationSec: s.durationSec,
@@ -84,18 +86,21 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
       toast(e.message, true);
     } finally {
       setBusy(null);
+      setAdding(null);
     }
   };
 
   /** Un video de Google: se valida que se pueda reproducir antes de agregarlo. */
   const addGoogle = async (g: GoogleItem) => {
     setBusy(g.videoId);
+    setAdding(g.title);
     try {
       const [v] = await pub('GET', `/youtube/search?q=${encodeURIComponent('https://www.youtube.com/watch?v=' + g.videoId)}`);
       await add(v ?? { videoId: g.videoId, title: g.title, thumbnail: g.thumbnail });
     } catch {
       toast('Ese video no se puede reproducir en la TV. Prueba con otro.', true);
       setBusy(null);
+      setAdding(null);
     }
   };
 
@@ -122,7 +127,19 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
         placeholder="Busca una canción, un artista o pega un link de YouTube"
         className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-white/30"
       />
-      {searching && <p className="mt-3 text-sm text-slate-400">Buscando…</p>}
+      {adding && (
+        <div className="mt-3 flex items-center gap-3 rounded-xl border p-3 text-sm" style={{ borderColor: ACCENT + '66', background: ACCENT + '14' }} role="status">
+          <svg className="h-5 w-5 shrink-0 animate-spin" viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="20" r="16" stroke={ACCENT + '33'} strokeWidth="5" />
+            <path d="M20 4a16 16 0 0116 16" stroke={ACCENT} strokeWidth="5" strokeLinecap="round" />
+          </svg>
+          <span className="min-w-0">
+            <b>Agregando a la cola…</b>
+            <span className="block truncate text-slate-300">{adding}</span>
+          </span>
+        </div>
+      )}
+      {searching && <div className="mt-3"><SkeletonList /></div>}
       {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
 
       {results.length > 1 && (
@@ -147,7 +164,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
                 {s.channelTitle} {fmtDuration(s.durationSec)}{s.viewCount ? ` · ${compact.format(s.viewCount)} vistas` : ''}
               </div>
             </div>
-            <Btn kind="accent" className="!px-3 !py-1.5" disabled={busy === s.videoId} onClick={() => add(s)}>Agregar</Btn>
+            <Btn kind="accent" className="!px-3 !py-1.5" disabled={busy === s.videoId} onClick={() => add(s)}>{busy === s.videoId ? 'Agregando…' : 'Agregar'}</Btn>
           </div>
         ))}
 
@@ -156,7 +173,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
             <div key={g.videoId} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-2.5">
               <Thumb src={g.thumbnail} className="h-12 w-20 !rounded-lg" />
               <div className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-tight">{g.title}</div>
-              <Btn kind="accent" className="!px-3 !py-1.5" disabled={busy === g.videoId} onClick={() => addGoogle(g)}>Agregar</Btn>
+              <Btn kind="accent" className="!px-3 !py-1.5" disabled={busy === g.videoId} onClick={() => addGoogle(g)}>{busy === g.videoId ? 'Agregando…' : 'Agregar'}</Btn>
             </div>
           ))}
 

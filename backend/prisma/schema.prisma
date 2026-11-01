@@ -29,6 +29,19 @@ enum SessionStatus {
   ENDED
 }
 
+enum EventType {
+  QR_SCANNED
+  SEARCH_PERFORMED
+  REQUEST_CREATED
+  REQUEST_APPROVED
+  REQUEST_REJECTED
+  PLAYBACK_STARTED
+  PLAYBACK_COMPLETED
+  PLAYBACK_SKIPPED
+  PLAYBACK_FAILED
+  FEEDBACK_SUBMITTED
+}
+
 enum RequestStatus {
   PENDING
   APPROVED
@@ -56,6 +69,7 @@ model Business {
   tables   Table[]
   sessions KaraokeSession[]
   requests SongRequest[]
+  events   KaraokeEvent[]
 }
 
 model User {
@@ -124,6 +138,7 @@ model SongRequest {
   position        Int
   rejectionReason String?
   requestedAt     DateTime      @default(now())
+  approvedAt      DateTime?
   startedAt       DateTime?
   completedAt     DateTime?
 
@@ -133,4 +148,20 @@ model SongRequest {
 
   @@index([businessId, sessionId, status, position])
   @@index([tableId, status])
+}
+
+/// Eventos con significado de negocio (no cada pulsacion). Las metricas se calculan a partir de ellos.
+model KaraokeEvent {
+  id         String    @id @default(cuid())
+  businessId String
+  sessionId  String?
+  tableId    String?
+  type       EventType
+  occurredAt DateTime  @default(now())
+  /// requestId, videoId, clientId (id anonimo del navegador), rating, etc.
+  metadata   Json?
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, type, occurredAt])
 }

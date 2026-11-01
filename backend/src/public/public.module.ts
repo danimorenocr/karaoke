@@ -6,6 +6,7 @@ import { QueueService } from '../queue/queue.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { YoutubeModule } from '../youtube/youtube.module';
 import { YoutubeService } from '../youtube/youtube.service';
+import { EventsService } from '../stats/events.service';
 
 class CreateRequestDto {
   @Matches(/^[\w-]{11}$/, { message: 'videoId invalido' }) videoId: string;
@@ -13,12 +14,22 @@ class CreateRequestDto {
   @IsOptional() @IsString() @MaxLength(120) channel?: string;
   @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
   @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
+}
+
+class ScanDto {
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
+}
+class FeedbackDto {
+  @IsInt() @Min(1) @Max(5) rating: number;
+  @IsOptional() @IsString() @MaxLength(300) comment?: string;
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
 }
 
 /** Sin login: la mesa se identifica por el token del QR. */
 @Controller('public/:token')
 class PublicController {
-  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService) {}
 
   @Get('state')
   @Throttle({ default: { limit: 3000, ttl: 60_000 } })
@@ -32,7 +43,33 @@ class PublicController {
   async search(@Param('token') token: string, @Query('q') q = '') {
     const table = await this.prisma.table.findUnique({ where: { qrToken: token }, include: { business: { select: { searchMode: true, status: true } } } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
+    this.events.record({ businessId: table.businessId, tableId: table.id, type: 'SEARCH_PERFORMED', metadata: { q: q.trim().toLowerCase().slice(0, 60) } });
     return this.yt.searchSongs(q, table.business.searchMode);
+  }
+
+  /** La pagina de la mesa avisa una vez por visita (no en cada refresco) para medir escaneos del QR. */
+  @Post('scan')
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  async scan(@Param('token') token: string, @Body() dto: ScanDto) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token } });
+    if (!table || !table.active) throw new NotFoundException('Este codigo QR no es valido');
+    const session = await this.prisma.karaokeSession.findFirst({ where: { businessId: table.businessId, status: 'ACTIVE' }, select: { id: true } });
+    this.events.record({ businessId: table.businessId, sessionId: session?.id, tableId: table.id, type: 'QR_SCANNED', metadata: { clientId: dto.clientId } });
+    return { ok: true };
+  }
+
+  /** Valoracion opcional y breve (1 a 5). */
+  @Post('feedback')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async feedback(@Param('token') token: string, @Body() dto: FeedbackDto) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token } });
+    if (!table || !table.active) throw new NotFoundException('Este codigo QR no es valido');
+    const session = await this.prisma.karaokeSession.findFirst({ where: { businessId: table.businessId, status: 'ACTIVE' }, select: { id: true } });
+    this.events.record({
+      businessId: table.businessId, sessionId: session?.id, tableId: table.id, type: 'FEEDBACK_SUBMITTED',
+      metadata: { rating: dto.rating, comment: dto.comment?.trim() || undefined, clientId: dto.clientId },
+    });
+    return { ok: true };
   }
 
   @Post('requests')

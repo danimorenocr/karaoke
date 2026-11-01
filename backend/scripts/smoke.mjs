@@ -111,6 +111,25 @@ ok(r.status === 404, 'admin de B no puede editar mesas de A');
 r = await call('GET', '/super/businesses', { token: A.admin });
 ok(r.status === 403, 'admin de bar no accede a super admin');
 
+// estadisticas: escaneo, valoracion y metricas del dueno
+await call('POST', `/public/${rot.qrToken}/scan`, { body: { clientId: 'cli-test-1' } });
+await call('POST', `/public/${A.t2.qrToken}/scan`, { body: { clientId: 'cli-test-2' } });
+await call('POST', `/public/${A.t2.qrToken}/feedback`, { body: { rating: 5, comment: 'todo bien', clientId: 'cli-test-2' } });
+r = await call('POST', `/public/${A.t2.qrToken}/feedback`, { body: { rating: 9 } });
+ok(r.status === 400, 'valoracion fuera de rango se rechaza');
+await new Promise((res) => setTimeout(res, 1200)); // los eventos se guardan en segundo plano
+const stats = (await call('GET', '/admin/stats?range=today&tz=300', { token: A.admin })).json;
+ok(stats?.participation?.requests >= 5, `estadisticas: solicitudes (${stats?.participation?.requests})`);
+ok(stats.participation.tablesParticipating >= 1 && stats.participation.qrScans >= 2, 'estadisticas: mesas participantes y escaneos QR');
+ok(stats.music.played >= 1 && stats.music.completed >= 1 && stats.music.failed >= 1 && stats.music.skipped >= 1, 'estadisticas: reproducidas, completadas, fallidas y saltadas');
+ok(stats.music.rejected >= 1 && stats.music.topSongs.length > 0 && stats.operations.requestsPerHour.reduce((a, b) => a + b, 0) >= 5, 'estadisticas: rechazadas, top canciones y actividad por hora');
+ok(stats.satisfaction.responses === 1 && stats.satisfaction.avgRating === 5, 'estadisticas: valoracion promedio');
+ok((await call('GET', '/admin/stats', { token: B.admin })).json.participation.requests === 0, 'estadisticas: el bar B no ve datos del bar A');
+ok((await call('GET', '/admin/stats', { token: A.dj })).status === 403, 'el DJ no accede a estadisticas del dueno');
+const tech = (await call('GET', '/super/metrics', { token: sa })).json;
+ok(tech?.database?.ok === true && tech.latencyMs && tech.youtube && tech.sockets, 'metricas tecnicas del super admin');
+ok((await call('GET', '/super/metrics', { token: A.admin })).status === 403, 'metricas tecnicas solo para super admin');
+
 // sesion cerrada / suspension
 await call('POST', '/dj/session/stop', { token: A.dj });
 r = await call('POST', `/public/${A.t2.qrToken}/requests`, { body: song(30) });
