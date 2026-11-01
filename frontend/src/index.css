@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+:root { color-scheme: dark; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.btn { @apply rounded-lg px-4 py-2 text-sm font-semibold transition disabled:opacity-40 bg-zinc-800 hover:bg-zinc-700; }
+.btn-primary { @apply bg-pink-600 hover:bg-pink-500; }
+.btn-danger { @apply bg-red-700 hover:bg-red-600; }
+.btn-ok { @apply bg-emerald-700 hover:bg-emerald-600; }
+.card { @apply rounded-xl border border-zinc-800 bg-zinc-900 p-4; }
+.input { @apply w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-pink-500; }

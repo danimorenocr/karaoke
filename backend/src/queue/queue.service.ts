@@ -1,0 +1,357 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, RequestStatus, SongRequest } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.gateway';
+
+type Tx = Prisma.TransactionClient;
+
+export interface NewRequestInput {
+  videoId: string;
+  title: string;
+  channel?: string;
+  thumbnail?: string;
+  durationSec?: number;
+}
+
+const WAITING: RequestStatus[] = ['PENDING', 'APPROVED'];
+const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED'];
+
+/**
+ * Toda la logica de sesion/cola/reproduccion. El backend decide que suena; la TV solo ejecuta.
+ * Cada mutacion toma un lock por establecimiento, asi dos eventos simultaneos
+ * (ej. "video termino" duplicado) se serializan y el segundo se ignora.
+ */
+@Injectable()
+export class QueueService {
+  constructor(private prisma: PrismaService, private rt: RealtimeService) {}
+
+  // ---------- helpers ----------
+
+  private async locked<T>(businessId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${businessId}))`;
+        return fn(tx);
+      },
+      { timeout: 15_000 },
+    );
+    this.rt.queueUpdated(businessId);
+    return result;
+  }
+
+  private activeSession(tx: Tx | PrismaService, businessId: string) {
+    return tx.karaokeSession.findFirst({ where: { businessId, status: 'ACTIVE' }, orderBy: { startedAt: 'desc' } });
+  }
+
+  private async requireActiveSession(tx: Tx, businessId: string) {
+    const s = await this.activeSession(tx, businessId);
+    if (!s) throw new ConflictException('No hay una sesion de karaoke activa');
+    return s;
+  }
+
+  /** Si nada suena y la TV ya fue iniciada, sube la siguiente aprobada. */
+  private async promote(tx: Tx, sessionId: string) {
+    const session = await tx.karaokeSession.findUniqueOrThrow({ where: { id: sessionId } });
+    if (!session.tvStarted || session.status !== 'ACTIVE') return;
+    const playing = await tx.songRequest.findFirst({ where: { sessionId, status: 'PLAYING' } });
+    if (playing) return;
+    const next = await tx.songRequest.findFirst({
+      where: { sessionId, status: 'APPROVED' },
+      orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }],
+    });
+    if (next) {
+      await tx.songRequest.update({ where: { id: next.id }, data: { status: 'PLAYING', startedAt: new Date() } });
+    }
+  }
+
+  private async getOwned(tx: Tx, businessId: string, id: string) {
+    const r = await tx.songRequest.findFirst({ where: { id, businessId } });
+    if (!r) throw new NotFoundException('Solicitud no encontrada');
+    return r;
+  }
+
+  private view(r: SongRequest & { table?: { name: string } }) {
+    return {
+      id: r.id,
+      videoId: r.videoId,
+      title: r.title,
+      channel: r.channel,
+      thumbnail: r.thumbnail,
+      durationSec: r.durationSec,
+      status: r.status,
+      position: r.position,
+      tableName: r.table?.name,
+      rejectionReason: r.rejectionReason,
+      requestedAt: r.requestedAt,
+    };
+  }
+
+  // ---------- estados (lectura) ----------
+
+  async djState(businessId: string) {
+    const session = await this.activeSession(this.prisma, businessId);
+    const business = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
+    const base = { business: { name: business.name, autoApprove: business.autoApprove }, tvConnected: this.rt.tvCount(businessId) > 0 };
+    if (!session) return { ...base, session: null, current: null, queue: [], pending: [], history: [] };
+
+    const include = { table: { select: { name: true } } };
+    const [current, queue, pending, history] = await Promise.all([
+      this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED' }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'PENDING' }, include, orderBy: { position: 'asc' } }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: { in: FINISHED } }, include, orderBy: { requestedAt: 'desc' }, take: 20 }),
+    ]);
+    return {
+      ...base,
+      session: {
+        id: session.id,
+        requestsOpen: session.requestsOpen,
+        paused: session.paused,
+        tvStarted: session.tvStarted,
+        startedAt: session.startedAt,
+      },
+      current: current && this.view(current),
+      queue: queue.map((r) => this.view(r)),
+      pending: pending.map((r) => this.view(r)),
+      history: history.map((r) => this.view(r)),
+    };
+  }
+
+  /** Estado para la TV: lo minimo para reproducir. */
+  async playerState(businessId: string) {
+    const s = await this.djState(businessId);
+    return {
+      business: s.business,
+      session: s.session,
+      current: s.current,
+      next: s.queue[0] ?? null,
+      upcoming: s.queue.slice(0, 5),
+    };
+  }
+
+  async publicState(tableToken: string) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
+    if (!table || !table.active || table.business.status !== 'ACTIVE') {
+      throw new NotFoundException('Este codigo QR no es valido');
+    }
+    const b = table.business;
+    const session = await this.activeSession(this.prisma, b.id);
+    const out = {
+      business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor },
+      table: { name: table.name },
+      session: session ? { open: session.requestsOpen } : null,
+      maxPending: b.maxPendingPerTable,
+      current: null as any,
+      queue: [] as any[],
+      mine: [] as any[],
+    };
+    if (!session) return out;
+    const include = { table: { select: { name: true } } };
+    const [current, queue, mine] = await Promise.all([
+      this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED' }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, tableId: table.id }, include, orderBy: { requestedAt: 'desc' }, take: 20 }),
+    ]);
+    // El cliente no necesita saber la razon interna ni ids de otras mesas; solo nombre de mesa.
+    out.current = current && this.view(current);
+    out.queue = queue.map((r) => this.view(r));
+    out.mine = mine.map((r) => this.view(r));
+    return out;
+  }
+
+  // ---------- sesion ----------
+
+  startSession(businessId: string) {
+    return this.locked(businessId, async (tx) => {
+      const existing = await this.activeSession(tx, businessId);
+      if (existing) return existing;
+      return tx.karaokeSession.create({ data: { businessId } });
+    });
+  }
+
+  stopSession(businessId: string) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.requireActiveSession(tx, businessId);
+      await tx.songRequest.updateMany({
+        where: { sessionId: s.id, status: { in: ['PENDING', 'APPROVED', 'PLAYING'] } },
+        data: { status: 'CANCELLED', completedAt: new Date() },
+      });
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { status: 'ENDED', endedAt: new Date() } });
+      return { ok: true };
+    });
+  }
+
+  setRequestsOpen(businessId: string, open: boolean) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.requireActiveSession(tx, businessId);
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { requestsOpen: open } });
+      return { ok: true };
+    });
+  }
+
+  /** Una sola escritura, sin transaccion ni lock; el evento sale tras guardar. */
+  async setPaused(businessId: string, paused: boolean) {
+    const r = await this.prisma.karaokeSession.updateMany({ where: { businessId, status: 'ACTIVE' }, data: { paused } });
+    if (!r.count) throw new ConflictException('No hay una sesion de karaoke activa');
+    this.rt.playback(businessId, paused ? 'playback.paused' : 'playback.resumed');
+    return { ok: true };
+  }
+
+  /** Reintenta el video actual en la TV (p.ej. se quedo congelado). */
+  async reloadCurrent(businessId: string) {
+    this.rt.playback(businessId, 'playback.reload');
+    return { ok: true };
+  }
+
+  // ---------- solicitudes (cliente) ----------
+
+  async createRequest(tableToken: string, input: NewRequestInput) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
+    if (!table || !table.active || table.business.status !== 'ACTIVE') throw new ForbiddenException('Este codigo QR no es valido');
+    const business = table.business;
+
+    return this.locked(business.id, async (tx) => {
+      const session = await this.activeSession(tx, business.id);
+      if (!session) throw new ConflictException('El karaoke aun no ha comenzado');
+      if (!session.requestsOpen) throw new ConflictException('Las solicitudes estan cerradas por ahora');
+
+      // El conteo ocurre dentro del lock del establecimiento: dos clientes simultaneos no pueden pasar el limite.
+      const waiting = await tx.songRequest.count({ where: { tableId: table.id, sessionId: session.id, status: { in: WAITING } } });
+      if (waiting >= business.maxPendingPerTable) {
+        throw new ConflictException(`Tu mesa ya tiene ${waiting} canciones en espera (maximo ${business.maxPendingPerTable})`);
+      }
+      const last = await tx.songRequest.aggregate({ where: { sessionId: session.id }, _max: { position: true } });
+      const created = await tx.songRequest.create({
+        data: {
+          businessId: business.id,
+          tableId: table.id,
+          sessionId: session.id,
+          videoId: input.videoId,
+          title: input.title.slice(0, 200),
+          channel: input.channel?.slice(0, 120),
+          thumbnail: input.thumbnail?.slice(0, 500),
+          durationSec: input.durationSec,
+          position: (last._max.position ?? 0) + 1,
+          status: business.autoApprove ? 'APPROVED' : 'PENDING',
+        },
+        include: { table: { select: { name: true } } },
+      });
+      if (business.autoApprove) await this.promote(tx, session.id);
+      return this.view(created);
+    });
+  }
+
+  cancelOwn(tableToken: string, requestId: string) {
+    return this.prisma.table.findUnique({ where: { qrToken: tableToken } }).then((table) => {
+      if (!table) throw new NotFoundException();
+      return this.locked(table.businessId, async (tx) => {
+        const r = await tx.songRequest.findFirst({ where: { id: requestId, tableId: table.id } });
+        if (!r) throw new NotFoundException('Solicitud no encontrada');
+        if (!WAITING.includes(r.status)) throw new ConflictException('Esta solicitud ya no se puede cancelar');
+        await tx.songRequest.update({ where: { id: r.id }, data: { status: 'CANCELLED', completedAt: new Date() } });
+        return { ok: true };
+      });
+    });
+  }
+
+  // ---------- DJ ----------
+
+  approve(businessId: string, id: string) {
+    return this.locked(businessId, async (tx) => {
+      const r = await this.getOwned(tx, businessId, id);
+      if (r.status !== 'PENDING') throw new ConflictException('La solicitud no esta pendiente');
+      await tx.songRequest.update({ where: { id }, data: { status: 'APPROVED' } });
+      await this.promote(tx, r.sessionId);
+      return { ok: true };
+    });
+  }
+
+  reject(businessId: string, id: string, reason?: string) {
+    return this.locked(businessId, async (tx) => {
+      const r = await this.getOwned(tx, businessId, id);
+      if (!WAITING.includes(r.status)) throw new ConflictException('La solicitud ya no esta en espera');
+      await tx.songRequest.update({ where: { id }, data: { status: 'REJECTED', rejectionReason: reason?.slice(0, 200), completedAt: new Date() } });
+      return { ok: true };
+    });
+  }
+
+  /** Reordena las APPROVED reutilizando sus mismas posiciones; el cliente solo propone el orden de ids. */
+  reorder(businessId: string, ids: string[]) {
+    return this.locked(businessId, async (tx) => {
+      const session = await this.requireActiveSession(tx, businessId);
+      const approved = await tx.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED' } });
+      const byId = new Map(approved.map((r) => [r.id, r]));
+      if (ids.length !== approved.length || ids.some((i) => !byId.has(i)) || new Set(ids).size !== ids.length) {
+        throw new BadRequestException('La cola cambio, recarga e intenta de nuevo');
+      }
+      const slots = approved.map((r) => r.position).sort((a, b) => a - b);
+      for (let i = 0; i < ids.length; i++) {
+        await tx.songRequest.update({ where: { id: ids[i] }, data: { position: slots[i] } });
+      }
+      return { ok: true };
+    });
+  }
+
+  /** Saltar la cancion actual. */
+  skip(businessId: string) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.requireActiveSession(tx, businessId);
+      const cur = await tx.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' } });
+      if (cur) await tx.songRequest.update({ where: { id: cur.id }, data: { status: 'CANCELLED', completedAt: new Date() } });
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { paused: false } });
+      await this.promote(tx, s.id);
+      return { ok: true };
+    });
+  }
+
+  /** Vuelve a poner al frente una cancion fallida/saltada/completada. */
+  retry(businessId: string, id: string) {
+    return this.locked(businessId, async (tx) => {
+      const r = await this.getOwned(tx, businessId, id);
+      if (!['FAILED', 'CANCELLED', 'COMPLETED'].includes(r.status)) throw new ConflictException('Solo se pueden reintentar canciones finalizadas');
+      const s = await this.requireActiveSession(tx, businessId);
+      if (r.sessionId !== s.id) throw new ConflictException('Pertenece a otra sesion');
+      const min = await tx.songRequest.aggregate({ where: { sessionId: s.id, status: { in: ['APPROVED', 'PLAYING'] } }, _min: { position: true } });
+      await tx.songRequest.update({
+        where: { id },
+        data: { status: 'APPROVED', position: (min._min.position ?? 1) - 1, startedAt: null, completedAt: null },
+      });
+      await this.promote(tx, s.id);
+      return { ok: true };
+    });
+  }
+
+  // ---------- TV / reproductor ----------
+
+  /** La TV pulso "Iniciar karaoke" (o pide la siguiente). Idempotente. */
+  playerNext(businessId: string) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.requireActiveSession(tx, businessId);
+      if (!s.tvStarted) await tx.karaokeSession.update({ where: { id: s.id }, data: { tvStarted: true } });
+      await this.promote(tx, s.id);
+      return { ok: true };
+    });
+  }
+
+  playerEnded(businessId: string, requestId: string) {
+    return this.finishCurrent(businessId, requestId, 'COMPLETED');
+  }
+
+  playerError(businessId: string, requestId: string) {
+    return this.finishCurrent(businessId, requestId, 'FAILED');
+  }
+
+  /** Solo avanza si requestId es la cancion que suena AHORA; un evento repetido no hace nada. */
+  private finishCurrent(businessId: string, requestId: string, status: 'COMPLETED' | 'FAILED') {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.activeSession(tx, businessId);
+      if (!s) return { ok: true, ignored: true };
+      const cur = await tx.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' } });
+      if (!cur || cur.id !== requestId) return { ok: true, ignored: true };
+      await tx.songRequest.update({ where: { id: cur.id }, data: { status, completedAt: new Date() } });
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { paused: false } });
+      await this.promote(tx, s.id);
+      return { ok: true };
+    });
+  }
+}
