@@ -90,7 +90,7 @@ export default function GoogleSearch({ query, onResults, onError, onPick }: { qu
 
   return (
     <div
-      className="mt-3 overflow-hidden rounded-2xl bg-white p-2 text-black"
+      className="karaoke-cse mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-100"
       // Tocar un resultado pide la cancion en vez de abrir YouTube; los anuncios siguen funcionando normal
       onClickCapture={(e) => {
         const a = (e.target as HTMLElement).closest('a');
@@ -106,7 +106,7 @@ export default function GoogleSearch({ query, onResults, onError, onPick }: { qu
         });
       }}
     >
-      <div className="mb-1 text-xs text-slate-500">Resultados de Google (respaldo) · toca uno para pedirlo</div>
+      <div className="mb-1 text-xs text-slate-400">Resultados de Google (respaldo) · toca uno para pedirlo</div>
       <div className="gcse-searchresults-only" data-gname={GNAME} data-autoSearchOnLoad="false" data-resultsReadyCallback={CALLBACK} />
     </div>
   );
