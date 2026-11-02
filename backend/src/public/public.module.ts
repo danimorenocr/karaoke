@@ -41,10 +41,10 @@ class PublicController {
   @Get('search')
   @Throttle({ default: { limit: 90, ttl: 60_000 } }) // varias mesas comparten la IP del wifi del bar
   async search(@Param('token') token: string, @Query('q') q = '') {
-    const table = await this.prisma.table.findUnique({ where: { qrToken: token }, include: { business: { select: { searchMode: true, status: true } } } });
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token }, include: { business: { select: { searchMode: true, searchProvider: true, status: true } } } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
     this.events.record({ businessId: table.businessId, tableId: table.id, type: 'SEARCH_PERFORMED', metadata: { q: q.trim().toLowerCase().slice(0, 60) } });
-    return this.yt.searchSongs(q, table.business.searchMode);
+    return this.yt.searchSongs(q, table.business.searchMode, table.business.searchProvider);
   }
 
   /** La pagina de la mesa avisa una vez por visita (no en cada refresco) para medir escaneos del QR. */

@@ -19,6 +19,12 @@ enum SearchMode {
   ANY
 }
 
+// Por donde se buscan las canciones: API de YouTube (con cache) o Google Programmable Search
+enum SearchProvider {
+  YOUTUBE
+  GOOGLE
+}
+
 enum BusinessStatus {
   ACTIVE
   SUSPENDED
@@ -57,12 +63,18 @@ model Business {
   name              String
   slug              String         @unique
   logoUrl           String?
+  // Imagen que la TV muestra entre canciones (data URL, ya reducida en el navegador)
+  tvBanner          String?        @db.Text
+  tvBannerAt        DateTime?
+  // Disenos que sus mesas pueden usar; vacio = todos (los define el super admin)
+  allowedExperiences String[]      @default([])
   primaryColor      String         @default("#ec4899")
   status            BusinessStatus @default(ACTIVE)
   maxPendingPerTable Int           @default(2)
   autoApprove       Boolean        @default(false)
   // KARAOKE: busca versiones karaoke. ANY: cualquier video de musica.
   searchMode        SearchMode     @default(KARAOKE)
+  searchProvider    SearchProvider @default(YOUTUBE)
   createdAt         DateTime       @default(now())
 
   users    User[]
@@ -166,4 +178,15 @@ model KaraokeEvent {
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId, type, occurredAt])
+}
+
+/// Cache persistente de busquedas de YouTube (cada search.list cuesta 100 unidades de cuota diaria).
+model SearchCache {
+  key       String   @id // "KARAOKE:texto normalizado"
+  results   Json
+  hits      Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
 }

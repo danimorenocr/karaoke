@@ -40,7 +40,7 @@ export function useToast() {
     return () => clearTimeout(t);
   }, [msg]);
   const node = msg && (
-    <div className={`fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg ${msg.error ? 'bg-red-700' : 'bg-emerald-700'}`}>
+    <div role="status" className={`kx-toast ${msg.error ? 'kx-toast-error' : ''} fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg ${msg.error ? 'bg-red-700' : 'bg-emerald-700'}`}>
       {msg.text}
     </div>
   );

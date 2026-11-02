@@ -1,4 +1,4 @@
-import { Controller, Get, Global, Module, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Global, Module, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.gateway';
@@ -20,6 +20,21 @@ class AdminStatsController {
     const r: Range = range === '7d' || range === '30d' ? range : 'today';
     const offset = Math.max(-840, Math.min(840, Number(tz) || 0));
     return this.stats.compute(u.businessId!, r, offset);
+  }
+}
+
+/** Estadisticas de cualquier establecimiento o de todos juntos (super admin). `all` = toda la plataforma. */
+@Controller('super/stats')
+@UseGuards(AuthGuard)
+@Roles('SUPER_ADMIN')
+class SuperStatsController {
+  constructor(private stats: StatsService) {}
+
+  @Get(':businessId')
+  get(@Param('businessId') businessId: string, @Query('range') range = 'today', @Query('tz') tz = '0') {
+    const r: Range = range === '7d' || range === '30d' ? range : 'today';
+    const offset = Math.max(-840, Math.min(840, Number(tz) || 0));
+    return this.stats.compute(businessId === 'all' ? undefined : businessId, r, offset);
   }
 }
 
@@ -57,7 +72,7 @@ class SuperMetricsController {
 @Global()
 @Module({
   imports: [YoutubeModule],
-  controllers: [AdminStatsController, SuperMetricsController],
+  controllers: [AdminStatsController, SuperStatsController, SuperMetricsController],
   providers: [EventsService, MetricsService, StatsService],
   exports: [EventsService, MetricsService],
 })

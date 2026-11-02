@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, RequestStatus, SongRequest } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { allowedExperiences } from '../experiences';
 import { RealtimeService } from '../realtime/realtime.gateway';
 import { EventsService } from '../stats/events.service';
 
@@ -101,7 +102,7 @@ export class QueueService {
     const tvConnected = this.rt.tvCount(businessId) > 0 || (!!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000);
     // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
     const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
-    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode }, tvConnected, tvArmed };
+    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode, tvBannerAt: business.tvBannerAt }, tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -150,6 +151,11 @@ export class QueueService {
     };
   }
 
+  async tvBanner(businessId: string) {
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { tvBanner: true } });
+    return { banner: b.tvBanner };
+  }
+
   async publicState(tableToken: string) {
     const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') {
@@ -159,7 +165,7 @@ export class QueueService {
     const session = await this.activeSession(this.prisma, b.id);
     const out = {
       business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor, searchMode: b.searchMode },
-      table: { name: table.name, experienceId: table.experienceId },
+      table: { name: table.name, experienceId: allowedExperiences(b.allowedExperiences).includes(table.experienceId) ? table.experienceId : 'classic' },
       session: session ? { open: session.requestsOpen } : null,
       maxPending: b.maxPendingPerTable,
       current: null as any,

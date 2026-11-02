@@ -114,3 +114,21 @@
 .lc-nav button.on .lc-ico { animation: lc-ico .35s ease-out; }
 @keyframes lc-ico { 40% { transform: translateY(-5px) scale(1.12); } }
 @media (prefers-reduced-motion: reduce) { .lc-main, .lc-nav button.on .lc-ico { animation: none; } }
+
+/* Avisos (toast): arriba, estilo crema con icono y entrada suave */
+.lc-root .kx-toast {
+  position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); bottom: auto; left: 50%; right: auto; z-index: 60;
+  width: min(calc(100vw - 28px), 26rem); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px 12px; border-radius: 18px;
+  background: linear-gradient(180deg, #fff6df, #f3dfb0); color: #2a1f17; border: 2px solid #2a1f1733;
+  box-shadow: 0 10px 26px #0007, inset 0 1px 0 #fff9; font: 600 .95rem/1.25 var(--sans);
+  animation: lc-toast .35s cubic-bezier(.2, 1.2, .4, 1) both;
+}
+.lc-root .kx-toast::before {
+  content: '✓'; flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--orange, #e8761f); color: #fff; font-size: 1.15rem; font-weight: 800; box-shadow: 0 2px 6px #0004;
+}
+.lc-root .kx-toast-error { border-color: #b4281e66; }
+.lc-root .kx-toast-error::before { content: '!'; background: #c0392b; }
+@keyframes lc-toast { from { opacity: 0; transform: translate(-50%, -22px) scale(.95); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .lc-root .kx-toast { animation: none; } }

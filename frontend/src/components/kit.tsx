@@ -24,6 +24,8 @@ const ICONS = {
   close: 'M6 6l12 12M18 6L6 18',
   download: 'M12 4v11M7 11l5 5 5-5M5 20h14',
   tv: 'M3 6h18v12H3zM8 21h8',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  left: 'M15 6l-6 6 6 6',
   dj: 'M3 14a9 9 0 0118 0M3 14v3a2 2 0 002 2h1v-6H5a2 2 0 00-2 1zM21 14v3a2 2 0 01-2 2h-1v-6h1a2 2 0 012 1z',
 } as const;
 export type IconName = keyof typeof ICONS;
@@ -36,41 +38,37 @@ export function Icon({ name, className = 'h-5 w-5' }: { name: IconName; classNam
   );
 }
 
-/** Logo "sonora. karaoke". */
+/** Logo de TONO (nota musical + nombre), en crema sobre fondo oscuro. */
 export function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
-  const big = size === 'lg';
-  const bars = [10, 18, 12, 24, 14, 8];
-  return (
-    <div className="text-center leading-none">
-      <svg viewBox="0 0 40 28" className={`mx-auto ${big ? 'h-10' : 'h-7'}`} aria-hidden fill={ACCENT}>
-        {bars.map((h, i) => <rect key={i} x={3 + i * 6.4} y={(28 - h) / 2} width="3.4" height={h} rx="1.7" />)}
-      </svg>
-      <div className={`font-extrabold tracking-tight text-white ${big ? 'mt-2 text-5xl' : 'mt-1.5 text-3xl'}`}>sonora.</div>
-      <div className={`mt-1 tracking-[.45em] text-slate-300 ${big ? 'text-xs' : 'text-[9px]'}`}>KARAOKE</div>
-    </div>
-  );
+  return <img src="/logo.png" alt="TONO" className={`mx-auto w-auto select-none ${size === 'lg' ? 'h-36' : 'h-24'}`} draggable={false} />;
 }
 
 export interface NavItem { id: string; label: string; icon: IconName }
 
 /** Pagina del panel: barra lateral + barra superior + cabecera con titulo. */
 export function Shell({
-  nav, active, onNav, eyebrow, title, subtitle, org, orgStatus = 'Activo', links = [], children,
+  nav, active, onNav, eyebrow, title, subtitle, org, links = [], children,
 }: {
   nav: NavItem[]; active: string; onNav: (id: string) => void;
   eyebrow: string; title: string; subtitle: string;
-  org: string; orgStatus?: string; links?: [string, string, IconName][]; children: ReactNode;
+  org: string; links?: [string, string, IconName][]; children: ReactNode;
 }) {
   const user = auth.user();
   const [menu, setMenu] = useState(false);
+  // Barra lateral plegable (escritorio); se recuerda la eleccion
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('sidebar') !== 'closed'; } catch { return true; } });
+  const toggle = () => setOpen((v) => { try { localStorage.setItem('sidebar', v ? 'closed' : 'open'); } catch { /* sin almacenamiento */ } return !v; });
   const initials = (user?.name ?? '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const logout = () => { auth.clear(); location.href = '/login'; };
 
   return (
     <div className="min-h-screen bg-[#060b14] text-slate-100" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       {/* Barra lateral (escritorio) */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/[0.07] bg-[#070d17] lg:flex">
-        <div className="px-5 pb-6 pt-7"><Brand /></div>
+      <aside className={`fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/[0.07] bg-[#070d17] ${open ? 'lg:flex' : ''}`}>
+        <div className="relative px-5 pb-6 pt-7">
+          <Brand />
+          <button onClick={toggle} className="absolute right-2 top-2 rounded-lg p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-slate-200" aria-label="Cerrar barra lateral" title="Cerrar barra lateral"><Icon name="left" className="h-4 w-4" /></button>
+        </div>
         <nav className="flex flex-col gap-1 px-3">
           {nav.map((n) => (
             <button
@@ -93,19 +91,17 @@ export function Shell({
             ))}
           </div>
         )}
-        <div className="relative mt-auto h-44 overflow-hidden">
-          <div className="absolute -left-10 bottom-[-40px] h-40 w-40 rounded-full border border-cyan-300/20" style={{ background: 'radial-gradient(circle,#0c1424 0 30%,#0a1a2c 31% 60%,transparent 61%)', boxShadow: `0 0 50px ${ACCENT}22` }} />
-          <p className="absolute bottom-6 left-5 text-[15px] leading-snug text-slate-100">La música<br />nos une <span style={{ color: ACCENT }}>♫</span></p>
-        </div>
       </aside>
 
-      <div className="lg:pl-56">
+      <div className={open ? 'lg:pl-56' : ''}>
         {/* Barra superior */}
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-white/[0.07] bg-[#060b14]/90 px-4 py-3.5 backdrop-blur sm:px-8">
+          {!open && (
+            <button onClick={toggle} className="hidden rounded-xl p-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white lg:block" aria-label="Abrir barra lateral" title="Abrir barra lateral"><Icon name="menu" /></button>
+          )}
           <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5">
             <span className="text-slate-300"><Icon name="store" /></span>
             <span className="truncate text-sm font-semibold">{org}</span>
-            <span className="flex shrink-0 items-center gap-1.5 text-sm text-slate-200"><i className="h-2 w-2 rounded-full bg-emerald-400" />{orgStatus}</span>
           </div>
           <div className="relative ml-auto flex items-center gap-4">
             <button onClick={() => setMenu((v) => !v)} className="flex items-center gap-3 rounded-2xl px-2 py-1 transition hover:bg-white/5" aria-haspopup="menu" aria-expanded={menu}>

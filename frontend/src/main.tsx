@@ -10,6 +10,7 @@ import Dj from './pages/Dj';
 import Tv from './pages/Tv';
 import Admin from './pages/Admin';
 import SuperAdmin from './pages/SuperAdmin';
+import { Privacy, Terms } from './pages/Legal';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -17,6 +18,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/privacidad" element={<Privacy />} />
+        <Route path="/terminos" element={<Terms />} />
         <Route path="/m/:token" element={<Customer />} />
         <Route path="/dj" element={<Protected roles={['DJ', 'ADMIN']}><Dj /></Protected>} />
         <Route path="/tv" element={<Protected roles={['DJ', 'ADMIN']}><Tv /></Protected>} />

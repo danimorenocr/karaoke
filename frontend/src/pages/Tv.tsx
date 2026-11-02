@@ -50,6 +50,7 @@ export default function Tv() {
   const replacedRef = useRef(false);
   const claimRef = useRef<() => void>(() => {});
   const stateRef = useRef<any>(null);
+  const [banner, setBanner] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (replacedRef.current) return;
@@ -217,6 +218,13 @@ export default function Tv() {
     sync(s, true);
   }
 
+  // Imagen del bar para el aviso entre canciones: se pide solo cuando cambia
+  const bannerAt = state?.business?.tvBannerAt ?? null;
+  useEffect(() => {
+    if (!bannerAt) { setBanner(null); return; }
+    api('GET', '/player/banner').then((r) => setBanner(r.banner ?? null)).catch(() => {});
+  }, [bannerAt]);
+
   const cur = state?.current;
   const noSession = state && !state.session;
   const idle = !cur;
@@ -245,12 +253,14 @@ export default function Tv() {
       <div className="absolute inset-0">
         <div ref={hostRef} className="absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full" />
 
-        {/* Entre canciones: nombre del bar mientras carga el siguiente video */}
-        <div
-          className={`pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-6 bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-zinc-950 p-8 text-center transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
-        >
-          <div className="tv-brand text-7xl font-extrabold md:text-9xl">{state?.business?.name ?? 'Karaoke'}</div>
-        </div>
+        {/* Entre canciones: solo se muestra la imagen que el admin subio (si no hay, no se muestra nada) */}
+        {banner && (
+          <div
+            className={`pointer-events-none absolute inset-0 z-[5] bg-black transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
+          >
+            <img src={banner} alt="" className="h-full w-full object-contain" />
+          </div>
+        )}
 
         {(!armed || idle || blocked) && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-zinc-950 p-8 text-center">

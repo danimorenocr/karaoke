@@ -42,8 +42,8 @@ class DjController {
 
   /** Busqueda del DJ, segun la configuracion del bar (solo karaoke / cualquier musica). */
   @Get('search') async search(@CurrentUser() u: AuthUser, @Query('q') q = '') {
-    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: biz(u) }, select: { searchMode: true } });
-    return this.yt.searchSongs(q, b.searchMode);
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: biz(u) }, select: { searchMode: true, searchProvider: true } });
+    return this.yt.searchSongs(q, b.searchMode, b.searchProvider);
   }
   @Post('requests') add(@CurrentUser() u: AuthUser, @Body() d: DjAddDto) {
     const { tableId, ...song } = d;
@@ -73,6 +73,7 @@ class PlayerController {
   constructor(private q: QueueService) {}
 
   @Get('state') state(@CurrentUser() u: AuthUser) { return this.q.playerState(biz(u)); }
+  @Get('banner') banner(@CurrentUser() u: AuthUser) { return this.q.tvBanner(biz(u)); }
   @Post('heartbeat') heartbeat(@CurrentUser() u: AuthUser, @Body() b: HeartbeatDto) { return this.q.playerHeartbeat(biz(u), b.requestId, b.positionSec); }
   @Post('next') next(@CurrentUser() u: AuthUser) { return this.q.playerNext(biz(u)); }
   @Post('ended') ended(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerEnded(biz(u), b.requestId); }

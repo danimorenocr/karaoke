@@ -1,3 +1,4 @@
+import { PrismaService } from '../prisma/prisma.service';
 import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 export interface SongSearchResult {
@@ -19,6 +20,13 @@ const VIDEO_ID = /^[\w-]{11}$/;
 // Pistas de que un video es musical (cuando YouTube no da la categoria)
 const MUSIC_RE = /karaoke|lyrics?|letra|instrumental|official (audio|video|music)|(video|audio) oficial|m[uú]sica|music|cover|remix|en vivo|live|feat\.|ft\.|vevo|- topic|session|acoustic|ac[uú]stic/i;
 const TTL_MS = 60 * 60 * 1000;
+const DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // una busqueda guardada sirve 30 dias
+const QUOTA_RETRY_MS = 30 * 60 * 1000; // tras agotar la cuota se vuelve a probar cada 30 min (se reinicia sola a medianoche del Pacifico)
+
+/** Misma busqueda aunque cambie mayusculas, acentos o espacios. */
+function normalize(q: string) {
+  return q.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 function parseVideoId(q: string): string | null {
   const s = q.trim();
@@ -36,6 +44,7 @@ function isoToSeconds(iso: string): number {
 @Injectable()
 export class YoutubeService implements MusicProvider {
   private log = new Logger('Youtube');
+  constructor(private prisma: PrismaService) {}
   private cache = new Map<string, { at: number; data: SongSearchResult[] }>();
   private quotaBlockedUntil = 0;
   private use = { day: '', searches: 0, videos: 0 };
@@ -59,19 +68,57 @@ export class YoutubeService implements MusicProvider {
   }
 
   /** mode KARAOKE: versiones karaoke. ANY: cualquier video de musica. */
-  async searchSongs(query: string, mode: 'KARAOKE' | 'ANY' = 'KARAOKE'): Promise<SongSearchResult[]> {
-    const q = query.trim().toLowerCase();
+  async searchSongs(query: string, mode: 'KARAOKE' | 'ANY' = 'KARAOKE', provider: 'YOUTUBE' | 'GOOGLE' = 'YOUTUBE'): Promise<SongSearchResult[]> {
+    const q = normalize(query);
     if (q.length < 2) throw new BadRequestException('Escribe al menos 2 caracteres');
     const key = `${mode}:${q}`; // cada modo tiene su propia cache
+    // Pegar un link/ID no gasta cuota de search.list (y funciona aunque el bar busque por Google)
+    const id = parseVideoId(query);
+    if (provider === 'GOOGLE' && !id) {
+      // El super admin eligio Google para este bar: el cliente usa el buscador de Google
+      throw new ServiceUnavailableException('Este establecimiento busca canciones con Google');
+    }
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
 
-    // Pegar un link/ID no gasta cuota de search.list
-    const id = parseVideoId(query);
-    const data = id ? await this.byId(id) : await this.search(query.trim(), mode);
+    if (id) {
+      const data = await this.byId(id);
+      this.remember(key, data);
+      return data;
+    }
+
+    // 1) Cache en la base de datos: no gasta cuota y sobrevive a reinicios y despliegues
+    const row = await this.prisma.searchCache.findUnique({ where: { key } }).catch(() => null);
+    if (row && Date.now() - row.updatedAt.getTime() < DB_TTL_MS) {
+      this.prisma.searchCache.update({ where: { key }, data: { hits: { increment: 1 } } }).catch(() => {});
+      const data = row.results as unknown as SongSearchResult[];
+      this.remember(key, data);
+      return data;
+    }
+
+    // 2) YouTube (100 unidades). Si falla o no hay cuota, se sirve la copia vieja si existe;
+    //    si no, el error (429/503) hace que el cliente use el respaldo de Google Search.
+    try {
+      const data = await this.search(query.trim(), mode);
+      this.remember(key, data);
+      if (data.length) {
+        this.prisma.searchCache
+          .upsert({ where: { key }, create: { key, results: data as any }, update: { results: data as any, createdAt: new Date() } })
+          .catch((e) => this.log.warn(`No se pudo guardar la cache: ${e.message}`));
+      }
+      return data;
+    } catch (e) {
+      if (row) {
+        this.log.warn(`YouTube no disponible: se sirve la copia guardada de "${q}"`);
+        return row.results as unknown as SongSearchResult[];
+      }
+      throw e;
+    }
+  }
+
+  private remember(key: string, data: SongSearchResult[]) {
     this.cache.set(key, { at: Date.now(), data });
     if (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value!);
-    return data;
   }
 
   private embeddable = new Map<string, { at: number; ok: boolean; music: boolean; title?: string }>();
@@ -183,6 +230,7 @@ export class YoutubeService implements MusicProvider {
     const ids = (j.items ?? []).map((i: any) => i.id.videoId).filter(Boolean);
     if (!ids.length) return [];
     const items = await this.videos(ids);
+    items.forEach((v) => this.embeddable.set(v.videoId, { at: Date.now(), ok: true, music: !!v.isMusic, title: v.title }));
     // Se conserva el orden de relevancia de YouTube; el orden por vistas lo aplica el cliente
     return ids.map((id: string) => items.find((i) => i.videoId === id)).filter(Boolean) as SongSearchResult[];
   }
@@ -196,8 +244,8 @@ export class YoutubeService implements MusicProvider {
     const body: any = await r.json().catch(() => ({}));
     const reason = body?.error?.errors?.[0]?.reason;
     this.log.warn(`YouTube ${r.status} ${reason ?? ''}`);
-    if (reason === 'quotaExceeded' || reason === 'rateLimitExceeded') {
-      this.quotaBlockedUntil = Date.now() + 10 * 60 * 1000;
+    if (['quotaExceeded', 'rateLimitExceeded', 'dailyLimitExceeded', 'userRateLimitExceeded'].includes(reason)) {
+      this.quotaBlockedUntil = Date.now() + QUOTA_RETRY_MS;
       throw new HttpException(
         'La busqueda esta temporalmente limitada (cuota de YouTube). Pega un link de YouTube.',
         HttpStatus.TOO_MANY_REQUESTS,

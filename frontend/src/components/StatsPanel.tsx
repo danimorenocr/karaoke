@@ -71,7 +71,8 @@ function HourChart({ data }: { data: number[] }) {
   );
 }
 
-export default function StatsPanel() {
+/** `path`: endpoint de estadisticas (admin: /admin/stats; super admin: /super/stats/<id|all>). */
+export default function StatsPanel({ path = '/admin/stats' }: { path?: string }) {
   const [range, setRange] = useState<Range>('today');
   const [s, setS] = useState<any>(null);
   const [error, setError] = useState('');
@@ -79,14 +80,14 @@ export default function StatsPanel() {
   useEffect(() => {
     let dead = false;
     const load = () =>
-      api('GET', `/admin/stats?range=${range}&tz=${new Date().getTimezoneOffset()}`)
+      api('GET', `${path}?range=${range}&tz=${new Date().getTimezoneOffset()}`)
         .then((d) => !dead && (setS(d), setError('')))
         .catch((e) => !dead && setError(e.message));
     setS(null);
     load();
     const t = setInterval(load, 30_000); // se refresca solo mientras el dueno mira el tablero
     return () => { dead = true; clearInterval(t); };
-  }, [range]);
+  }, [range, path]);
 
   const p = s?.participation, m = s?.music, o = s?.operations, sat = s?.satisfaction;
   const change = s?.comparison?.changePct;

@@ -118,7 +118,7 @@ export default function LatinCollage({ k }: ExperienceProps) {
       {state.queue.length === 0 ? <div className="lc-card lc-center">La cola está vacía. ¡Sé el primero!</div> : (
         <ol className="lc-list">
           {state.queue.map((r: any, i: number) => (
-            <li key={r.id} className="lc-card lc-qrow"><em>{i + 1}</em><span><b>{r.title}</b><small>{r.tableName}</small></span></li>
+            <li key={r.id} className="lc-card lc-qrow"><em>{i + 1}</em><img src={r.thumbnail} alt="" loading="lazy" /><span><b>{r.title}</b><small>{r.tableName}</small></span></li>
           ))}
         </ol>
       )}

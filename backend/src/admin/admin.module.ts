@@ -1,11 +1,11 @@
-import { Body, ConflictException, Controller, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Body, ConflictException, Controller, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { IsArray, IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.gateway';
-import { EXPERIENCE_IDS } from '../experiences';
+import { allowedExperiences, EXPERIENCE_IDS } from '../experiences';
 
 const newToken = () => randomBytes(9).toString('base64url');
 const slugify = (s: string) =>
@@ -17,6 +17,12 @@ class CreateBusinessDto {
   @IsEmail() adminEmail: string;
   @IsString() @MinLength(8) adminPassword: string;
 }
+class ProviderDto {
+  @IsIn(['YOUTUBE', 'GOOGLE']) provider: 'YOUTUBE' | 'GOOGLE';
+}
+class ExperiencesDto {
+  @IsArray() @IsIn([...EXPERIENCE_IDS], { each: true }) ids: string[];
+}
 class StatusDto {
   @IsBoolean() active: boolean;
 }
@@ -24,6 +30,8 @@ class UpdateBusinessDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) name?: string;
   @IsOptional() @IsString() @MaxLength(500) logoUrl?: string;
   @IsOptional() @IsHexColor() primaryColor?: string;
+  // Imagen (data URL) o null para quitarla
+  @IsOptional() @IsString() @MaxLength(3_000_000) @Matches(/^data:image\/(png|jpe?g|webp);base64,/) tvBanner?: string | null;
   @IsOptional() @IsInt() @Min(1) @Max(20) maxPendingPerTable?: number;
   @IsOptional() @IsBoolean() autoApprove?: boolean;
   @IsOptional() @IsIn(['KARAOKE', 'ANY']) searchMode?: 'KARAOKE' | 'ANY';
@@ -69,13 +77,31 @@ class AdminService {
     return this.prisma.business.update({ where: { id }, data: { status: active ? 'ACTIVE' : 'SUSPENDED' } });
   }
 
+  setSearchProvider(id: string, provider: 'YOUTUBE' | 'GOOGLE') {
+    return this.prisma.business.update({ where: { id }, data: { searchProvider: provider } });
+  }
+
+  /** El super admin elige que disenos puede usar un establecimiento. */
+  async setExperiences(id: string, ids: string[]) {
+    const allowed = allowedExperiences(ids.length ? ids : ['classic']);
+    // Si estan todos se guarda vacio (= todos, incluidos los que se agreguen despues)
+    const stored = allowed.length === EXPERIENCE_IDS.length ? [] : allowed;
+    const b = await this.prisma.business.update({ where: { id }, data: { allowedExperiences: stored } });
+    // Las mesas que usaban un diseno retirado vuelven al clasico
+    await this.prisma.table.updateMany({ where: { businessId: id, experienceId: { notIn: allowed } }, data: { experienceId: 'classic' } });
+    this.rt.queueUpdated(id);
+    return b;
+  }
+
   // Toda consulta de abajo filtra por businessId (viene del JWT, nunca del cliente).
   getBusiness(businessId: string) {
     return this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
   }
 
   updateBusiness(businessId: string, dto: UpdateBusinessDto) {
-    return this.prisma.business.update({ where: { id: businessId }, data: dto });
+    const data: any = { ...dto };
+    if ('tvBanner' in dto) data.tvBannerAt = dto.tvBanner ? new Date() : null;
+    return this.prisma.business.update({ where: { id: businessId }, data });
   }
 
   listTables(businessId: string) {
@@ -94,6 +120,10 @@ class AdminService {
 
   async updateTable(businessId: string, id: string, dto: UpdateTableDto) {
     await this.ownedTable(businessId, id);
+    if (dto.experienceId) {
+      const biz = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { allowedExperiences: true } });
+      if (!allowedExperiences(biz.allowedExperiences).includes(dto.experienceId)) throw new ForbiddenException('Ese diseno no esta habilitado para tu establecimiento');
+    }
     const t = await this.prisma.table.update({ where: { id }, data: dto });
     this.rt.queueUpdated(businessId);
     return t;
@@ -146,6 +176,8 @@ class SuperController {
   constructor(private s: AdminService) {}
   @Get('businesses') list() { return this.s.listBusinesses(); }
   @Post('businesses') create(@Body() dto: CreateBusinessDto) { return this.s.createBusiness(dto); }
+  @Patch('businesses/:id/search-provider') provider(@Param('id') id: string, @Body() b: ProviderDto) { return this.s.setSearchProvider(id, b.provider); }
+  @Patch('businesses/:id/experiences') experiences(@Param('id') id: string, @Body() b: ExperiencesDto) { return this.s.setExperiences(id, b.ids); }
   @Patch('businesses/:id/status') status(@Param('id') id: string, @Body() b: StatusDto) { return this.s.setBusinessStatus(id, b.active); }
 }
 

@@ -1,0 +1,2 @@
+ALTER TABLE "Business" ADD COLUMN "tvBanner" TEXT,
+ADD COLUMN "tvBannerAt" TIMESTAMP(3);

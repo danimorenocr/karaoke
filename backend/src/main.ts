@@ -2,6 +2,7 @@ import 'dotenv/config';
 import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma/prisma.service';
@@ -20,7 +21,8 @@ async function seedSuperAdmin(prisma: PrismaService) {
 
 async function bootstrap() {
   if (!process.env.JWT_SECRET) throw new Error('Falta JWT_SECRET');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.useBodyParser('json', { limit: '4mb' }); // el banner de la TV viaja como imagen en base64
   app.enableShutdownHooks(); // en cada redeploy (SIGTERM) cierra sockets y conexiones a la BD ordenadamente
   // Railway esta detras de un proxy: necesario para que el rate limit vea la IP real
   (app.getHttpAdapter().getInstance() as any).set('trust proxy', 1);

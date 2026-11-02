@@ -77,51 +77,92 @@ function TableName({ name, onSave }: { name: string; onSave: (name: string) => P
   );
 }
 
+/** Parte el codigo de la mesa en dos renglones para que quepa en el centro del QR. */
+const codeLines = (token: string): [string, string] => [token.slice(0, Math.ceil(token.length / 2)), token.slice(Math.ceil(token.length / 2))];
+
+/** QR de la mesa con su codigo escrito en el centro (correccion de errores alta para que siga leyendose). */
+async function qrWithCode(token: string, width: number): Promise<string> {
+  const canvas = document.createElement('canvas');
+  await QRCode.toCanvas(canvas, tableUrl(token), { width, margin: 1, errorCorrectionLevel: 'H' });
+  const g = canvas.getContext('2d')!;
+  const [l1, l2] = codeLines(token);
+  const box = canvas.width * 0.3, h = canvas.width * 0.17;
+  const x = (canvas.width - box) / 2, y = (canvas.height - h) / 2;
+  g.fillStyle = '#fff';
+  g.beginPath();
+  g.roundRect(x, y, box, h, canvas.width * 0.02);
+  g.fill();
+  g.strokeStyle = '#111';
+  g.lineWidth = Math.max(1, canvas.width * 0.004);
+  g.stroke();
+  g.fillStyle = '#111';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `700 ${canvas.width * 0.058}px ui-monospace, Menlo, Consolas, monospace`;
+  g.fillText(l1, canvas.width / 2, canvas.height / 2 - h * 0.22);
+  g.fillText(l2, canvas.width / 2, canvas.height / 2 + h * 0.22);
+  return canvas.toDataURL('image/png');
+}
+
 function Qr({ token, size }: { token: string; size: number }) {
   const [src, setSrc] = useState('');
-  useEffect(() => { QRCode.toDataURL(tableUrl(token), { width: size * 4, margin: 1 }).then(setSrc); }, [token, size]);
-  return src ? <img src={src} style={{ width: size, height: size }} alt="Código QR de la mesa" /> : <div style={{ width: size, height: size }} className="rounded bg-black/10" />;
+  useEffect(() => { qrWithCode(token, size * 4).then(setSrc); }, [token, size]);
+  return src ? <img src={src} style={{ width: size, height: size }} alt={`Código QR de la mesa (${token})`} /> : <div style={{ width: size, height: size }} className="rounded bg-black/10" />;
 }
 
 async function downloadQr(name: string, token: string, kind: 'png' | 'svg') {
-  const href = kind === 'png'
-    ? await QRCode.toDataURL(tableUrl(token), { width: 1024, margin: 2 })
-    : 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(await QRCode.toString(tableUrl(token), { type: 'svg', margin: 2 }));
+  let href: string;
+  if (kind === 'png') href = await qrWithCode(token, 1024);
+  else {
+    let svg = await QRCode.toString(tableUrl(token), { type: 'svg', margin: 2, errorCorrectionLevel: 'H' });
+    const n = Number(svg.match(/viewBox="0 0 (\d+)/)?.[1] ?? 0);
+    if (n) {
+      const [l1, l2] = codeLines(token);
+      const w = n * 0.3, h = n * 0.17, x = (n - w) / 2, y = (n - h) / 2;
+      const txt = (t: string, dy: number) => `<text x="${n / 2}" y="${n / 2 + dy}" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-weight="700" font-size="${n * 0.058}" fill="#111">${t}</text>`;
+      svg = svg.replace('</svg>', `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${n * 0.02}" fill="#fff" stroke="#111" stroke-width="${n * 0.004}"/>${txt(l1, -h * 0.22)}${txt(l2, h * 0.22)}</svg>`);
+    }
+    href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
   const a = document.createElement('a');
   a.href = href;
   a.download = `qr-${name}.${kind}`;
   a.click();
 }
 
+/** PDF con todos los QR (4 por hoja A4): cada uno apunta al enlace de su mesa y lleva el nombre de la mesa. */
+async function downloadAllQrPdf(tables: any[], bizName: string) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, H = 297, cw = W / 2, ch = H / 2;
+  for (let i = 0; i < tables.length; i++) {
+    const t = tables[i];
+    const slot = i % 4;
+    if (i > 0 && slot === 0) doc.addPage();
+    const x = (slot % 2) * cw, y = Math.floor(slot / 2) * ch;
+    const png = await qrWithCode(t.qrToken, 900);
+    doc.setDrawColor(200).setLineDashPattern([2, 2], 0).rect(x + 4, y + 4, cw - 8, ch - 8).setLineDashPattern([], 0);
+    doc.setTextColor(20).setFont('helvetica', 'bold').setFontSize(26);
+    doc.text(String(t.name), x + cw / 2, y + 26, { align: 'center', maxWidth: cw - 20 });
+    doc.addImage(png, 'PNG', x + (cw - 78) / 2, y + 36, 78, 78);
+    doc.setFont('helvetica', 'normal').setFontSize(12).setTextColor(70);
+    doc.text('Escanea el código y pide tu canción', x + cw / 2, y + 124, { align: 'center' });
+    doc.setFontSize(9).setTextColor(130);
+    doc.text(bizName, x + cw / 2, y + 133, { align: 'center', maxWidth: cw - 20 });
+    if (!t.active) doc.text('(mesa inactiva)', x + cw / 2, y + 139, { align: 'center' });
+  }
+  doc.save(`qr-mesas-${bizName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'bar'}.pdf`);
+}
+
 /** Tarjeta de mesa: toma el aspecto de la experiencia que tiene asignada. */
-function TableCard({ t, onDetails, onToggle, onRotate }: { t: any; onDetails: () => void; onToggle: () => void; onRotate: () => void }) {
-  const [menu, setMenu] = useState(false);
+function TableCard({ t, onDetails }: { t: any; onDetails: () => void }) {
   const th = tableTheme(t.experienceId);
   const ink = th.dark ? 'text-white' : 'text-[#1d1a14]';
   const sub = th.dark ? 'text-white/70' : 'text-[#1d1a14]/65';
   return (
     <article className={`relative overflow-hidden rounded-3xl p-5 shadow-xl transition ${t.active ? '' : 'opacity-60 grayscale'} ${ink}`} style={{ background: th.bg, minHeight: 300 }}>
       {th.art}
-      <div className="relative z-10 flex items-start justify-between">
-        <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${th.dark ? 'bg-white/10' : 'bg-black/[.06]'}`}>
-          <i className={`h-2.5 w-2.5 rounded-full ${t.active ? 'bg-emerald-500' : 'bg-red-500'}`} />{t.active ? 'Activa' : 'Inactiva'}
-        </span>
-        <div className="relative">
-          <button onClick={() => setMenu((v) => !v)} className={`grid h-8 w-10 place-items-center rounded-lg ${th.dark ? 'bg-white/10' : 'bg-black/[.06]'}`} aria-label="Más acciones" aria-haspopup="menu"><Icon name="dots" /></button>
-          {menu && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
-              <div className="absolute right-0 top-10 z-20 w-60 rounded-2xl border border-white/10 bg-[#0b1322] p-1.5 text-sm text-slate-100 shadow-2xl" role="menu">
-                <button className="w-full rounded-xl px-3 py-2.5 text-left hover:bg-white/10" onClick={() => { setMenu(false); onDetails(); }}>Ver detalles</button>
-                <button className="w-full rounded-xl px-3 py-2.5 text-left hover:bg-white/10" onClick={() => { setMenu(false); onToggle(); }}>{t.active ? 'Desactivar mesa' : 'Activar mesa'}</button>
-                <button className="w-full rounded-xl px-3 py-2.5 text-left text-red-300 hover:bg-red-500/10" onClick={() => { setMenu(false); onRotate(); }}>Revocar y regenerar QR</button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <h3 className="relative z-10 mt-3 text-3xl font-extrabold tracking-tight">{t.name}</h3>
+      <h3 className="relative z-10 text-3xl font-extrabold tracking-tight">{t.name}</h3>
       <p className={`relative z-10 mt-1 text-sm ${sub}`}>Experiencia: {expName(t.experienceId)}</p>
 
       <div className="relative z-10 mt-4 inline-block rounded-2xl bg-white p-2 shadow-md">
@@ -138,7 +179,7 @@ function TableCard({ t, onDetails, onToggle, onRotate }: { t: any; onDetails: ()
   );
 }
 
-function TableDetails({ t, onClose, onPatch, onRotate }: { t: any; onClose: () => void; onPatch: (d: any, ok?: string) => Promise<void>; onRotate: () => void }) {
+function TableDetails({ t, allowed, onClose, onPatch, onRotate }: { t: any; allowed: string[]; onClose: () => void; onPatch: (d: any, ok?: string) => Promise<void>; onRotate: () => void }) {
   return (
     <Dialog title="Detalles de la mesa" onClose={onClose} wide>
       <div className="grid gap-6 md:grid-cols-[auto_1fr]">
@@ -160,7 +201,7 @@ function TableDetails({ t, onClose, onPatch, onRotate }: { t: any; onClose: () =
           <div>
             <div className="mb-2 text-xs uppercase tracking-wider text-slate-400">Experiencia (diseño que ven los clientes)</div>
             <div className="grid gap-2 sm:grid-cols-2">
-              {EXPERIENCES.map((x) => {
+              {EXPERIENCES.filter((x) => allowed.length === 0 || x.id === 'classic' || allowed.includes(x.id)).map((x) => {
                 const on = x.id === t.experienceId;
                 return (
                   <button
@@ -191,21 +232,23 @@ function TableDetails({ t, onClose, onPatch, onRotate }: { t: any; onClose: () =
   );
 }
 
-function TablesView({ tables, onCreate, onPatch, onRotate }: {
+function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
   tables: any[];
+  allowed: string[];
+  bizName: string;
   onCreate: (name: string) => Promise<void>;
   onPatch: (id: string, d: any, ok?: string) => Promise<void>;
   onRotate: (t: any) => void;
 }) {
   const [q, setQ] = useState('');
-  const [filter, setFilter] = useState<'all' | 'on' | 'off'>('all');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
+  const [pdfBusy, setPdfBusy] = useState(false);
   const shown = useMemo(
-    () => tables.filter((t) => t.name.toLowerCase().includes(q.trim().toLowerCase()) && (filter === 'all' || (filter === 'on') === t.active)),
-    [tables, q, filter],
+    () => tables.filter((t) => t.name.toLowerCase().includes(q.trim().toLowerCase())),
+    [tables, q],
   );
   const open = tables.find((t) => t.id === openId);
 
@@ -216,11 +259,13 @@ function TablesView({ tables, onCreate, onPatch, onRotate }: {
           <Icon name="search" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar mesa..." className="w-full bg-transparent text-slate-100 outline-none placeholder:text-slate-500" />
         </label>
-        <div className="flex rounded-2xl border border-white/10 bg-white/[0.04] p-1.5">
-          {([['all', 'Todas'], ['on', 'Activas'], ['off', 'Inactivas']] as const).map(([k, label]) => (
-            <button key={k} onClick={() => setFilter(k)} className={`rounded-xl px-5 py-2 text-sm font-semibold transition ${filter === k ? 'text-[#04202a]' : 'text-slate-300 hover:bg-white/10'}`} style={filter === k ? { background: ACCENT } : undefined}>{label}</button>
-          ))}
-        </div>
+        <button
+          onClick={async () => { setPdfBusy(true); try { await downloadAllQrPdf(tables, bizName); } finally { setPdfBusy(false); } }}
+          disabled={tables.length === 0 || pdfBusy}
+          className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3.5 font-semibold text-slate-100 transition hover:bg-white/10 disabled:opacity-40"
+        >
+          <Icon name="download" />{pdfBusy ? 'Generando…' : 'Descargar QR en PDF'}
+        </button>
         <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-2xl px-6 py-3.5 font-bold text-[#04202a] shadow-lg transition hover:brightness-110 active:scale-[.98]" style={{ background: ACCENT, boxShadow: `0 8px 30px ${ACCENT}44` }}>
           <Icon name="plus" />Nueva Mesa
         </button>
@@ -237,8 +282,6 @@ function TablesView({ tables, onCreate, onPatch, onRotate }: {
               key={t.id}
               t={t}
               onDetails={() => setOpenId(t.id)}
-              onToggle={() => onPatch(t.id, { active: !t.active })}
-              onRotate={() => onRotate(t)}
             />
           ))}
         </div>
@@ -259,6 +302,7 @@ function TablesView({ tables, onCreate, onPatch, onRotate }: {
       {open && (
         <TableDetails
           t={open}
+          allowed={allowed}
           onClose={() => setOpenId(null)}
           onPatch={(d, ok) => onPatch(open.id, d, ok)}
           onRotate={() => onRotate(open)}
@@ -297,7 +341,6 @@ export default function Admin() {
       title={title}
       subtitle={subtitle}
       org={biz.name}
-      orgStatus={biz.status === 'ACTIVE' ? 'Activo' : 'Suspendido'}
       links={[['/dj', 'Panel DJ', 'dj'], ['/tv', 'Pantalla TV', 'tv']]}
     >
       {tab === 'stats' && <StatsPanel />}
@@ -305,6 +348,8 @@ export default function Admin() {
       {tab === 'tables' && (
         <TablesView
           tables={tables}
+          allowed={biz.allowedExperiences ?? []}
+          bizName={biz.name}
           onCreate={(name) => reload(() => api('POST', '/admin/tables', { name }), 'Mesa creada')}
           onPatch={(id, d, ok) => reload(() => api('PATCH', `/admin/tables/${id}`, d), ok)}
           onRotate={(t) => confirm(`El QR impreso de ${t.name} dejará de funcionar. ¿Generar uno nuevo?`) && reload(() => api('POST', `/admin/tables/${t.id}/rotate-qr`), 'QR regenerado')}
@@ -376,12 +421,37 @@ export default function Admin() {
   );
 }
 
+/** Reduce la imagen elegida (max 1920 px, JPEG) para que pese poco al guardarla. */
+function resizeBanner(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1920 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen')); };
+    img.src = url;
+  });
+}
+
 function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
+  const [banner, setBanner] = useState<string | null>(biz.tvBanner ?? null);
+  const [bannerDirty, setBannerDirty] = useState(false);
+  const [bannerErr, setBannerErr] = useState('');
   const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY' });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, logoUrl: f.logoUrl || undefined, maxPendingPerTable: Number(f.maxPendingPerTable) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, logoUrl: f.logoUrl || undefined, maxPendingPerTable: Number(f.maxPendingPerTable), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
@@ -422,6 +492,35 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
             label="El DJ debe aprobar cada solicitud"
             hint="Si lo desactivas, las canciones pasan directo a la cola y suenan sin revisión."
           />
+        </div>
+      </Card>
+      <Card title="Banner de la TV" className="lg:col-span-2">
+        <div className="grid gap-5 md:grid-cols-[minmax(0,22rem)_1fr] md:items-center">
+          <div className="grid aspect-video place-items-center overflow-hidden rounded-xl border border-white/10 bg-black">
+            {banner ? <img src={banner} alt="Banner de la TV" className="h-full w-full object-contain" /> : <span className="px-4 text-center text-xs text-slate-500">Sin imagen: la TV muestra el nombre del bar</span>}
+          </div>
+          <div className="grid gap-3 text-sm">
+            <p className="text-slate-300">Esta imagen aparece en la TV entre una canción y otra, mientras carga el siguiente video. Usa una imagen horizontal (16:9, por ejemplo 1920×1080); PNG, JPG o WebP.</p>
+            <div className="flex flex-wrap gap-2">
+              <label className="cursor-pointer rounded-xl bg-white/10 px-4 py-2 font-semibold hover:bg-white/15">
+                {banner ? 'Cambiar imagen' : 'Subir imagen'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    try { setBanner(await resizeBanner(file)); setBannerDirty(true); setBannerErr(''); } catch (err: any) { setBannerErr(err.message); }
+                  }}
+                />
+              </label>
+              {banner && <Btn type="button" kind="danger" onClick={() => { setBanner(null); setBannerDirty(true); }}>Quitar</Btn>}
+            </div>
+            {bannerErr && <span className="text-red-300">{bannerErr}</span>}
+            {bannerDirty && <span className="text-xs text-amber-300">Pulsa «Guardar cambios» para aplicarla.</span>}
+          </div>
         </div>
       </Card>
       <div className="lg:col-span-2"><Btn kind="accent" className="px-8 py-3">Guardar cambios</Btn></div>

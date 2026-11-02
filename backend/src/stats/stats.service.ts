@@ -30,7 +30,8 @@ export class StatsService {
   constructor(private prisma: PrismaService) {}
 
   /** `tzOffsetMin` = new Date().getTimezoneOffset() del navegador (Colombia: 300). */
-  async compute(businessId: string, range: Range, tzOffsetMin: number) {
+  /** `businessId` indefinido = todos los establecimientos (super admin). */
+  async compute(businessId: string | undefined, range: Range, tzOffsetMin: number) {
     const now = Date.now();
     const localNow = now - tzOffsetMin * 60_000;
     const localMidnight = Math.floor(localNow / DAY) * DAY;

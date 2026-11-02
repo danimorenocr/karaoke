@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { useAction, useToast } from '../components/ui';
+import { EXPERIENCES } from '../experiences';
+import StatsPanel from '../components/StatsPanel';
 import { ACCENT, Badge, Btn, Card, Dialog, Empty, Field, Icon, NavItem, Shell } from '../components/kit';
 
 const EMPTY = { name: '', adminName: '', adminEmail: '', adminPassword: '' };
@@ -49,21 +51,25 @@ function Health() {
   );
 }
 
-type Tab = 'overview' | 'businesses';
+type Tab = 'overview' | 'events' | 'businesses';
 const NAV: NavItem[] = [
   { id: 'overview', label: 'Resumen', icon: 'home' },
+  { id: 'events', label: 'Eventos', icon: 'chart' },
   { id: 'businesses', label: 'Establecimientos', icon: 'store' },
 ];
 const HERO: Record<Tab, [string, string]> = {
   overview: ['Resumen', 'Estado general de la plataforma y de todos los establecimientos.'],
-  businesses: ['Establecimientos', 'Crea, suspende y reactiva los bares que usan Sonora.'],
+  events: ['Eventos', 'Gráficas de actividad de todos los establecimientos o de uno en particular.'],
+  businesses: ['Establecimientos', 'Crea, suspende y reactiva los bares que usan TONO.'],
 };
 
 export default function SuperAdmin() {
   const [tab, setTab] = useState<Tab>('overview');
   const [list, setList] = useState<any[] | null>(null);
   const [q, setQ] = useState('');
+  const [statsBiz, setStatsBiz] = useState('all');
   const [creating, setCreating] = useState(false);
+  const [designs, setDesigns] = useState<{ b: any; sel: string[] } | null>(null);
   const [f, setF] = useState(EMPTY);
   const { toast, node } = useToast();
   const run = useAction(toast);
@@ -77,7 +83,7 @@ export default function SuperAdmin() {
   const [title, subtitle] = HERO[tab];
 
   return (
-    <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Super administración" title={title} subtitle={subtitle} org="Plataforma Sonora" orgStatus="En línea">
+    <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Super administración" title={title} subtitle={subtitle} org="Plataforma TONO">
       {tab === 'overview' && (
         <>
           <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -88,6 +94,19 @@ export default function SuperAdmin() {
           </div>
           <Health />
         </>
+      )}
+
+      {tab === 'events' && (
+        <div className="space-y-6">
+          <label className="inline-flex items-center gap-3 text-sm text-slate-300">
+            Establecimiento
+            <select value={statsBiz} onChange={(e) => setStatsBiz(e.target.value)} className="rounded-xl border border-white/10 bg-[#0b1322] px-4 py-2.5 text-slate-100 outline-none focus:border-white/30">
+              <option value="all">Todos</option>
+              {(list ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <StatsPanel path={`/super/stats/${statsBiz}`} />
+        </div>
       )}
 
       {tab === 'businesses' && (
@@ -122,9 +141,34 @@ export default function SuperAdmin() {
                         <div key={k} className="rounded-xl bg-white/[0.05] py-2.5"><dd className="text-xl font-bold">{v}</dd><dt className="text-[11px] uppercase tracking-wider text-slate-400">{k}</dt></div>
                       ))}
                     </dl>
+                    <div className="mt-4">
+                      <div className="mb-1.5 text-[11px] uppercase tracking-wider text-slate-400">Buscar canciones con</div>
+                      <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-white/[0.05] p-1">
+                        {([['YOUTUBE', 'YouTube'], ['GOOGLE', 'Google']] as const).map(([k, label]) => {
+                          const sel = (b.searchProvider ?? 'YOUTUBE') === k;
+                          return (
+                            <button
+                              key={k}
+                              onClick={() => !sel && run(async () => { await api('PATCH', `/super/businesses/${b.id}/search-provider`, { provider: k }); toast(`${b.name}: busca con ${label}`); await load(); })}
+                              className="rounded-lg py-2 text-sm font-semibold transition"
+                              style={sel ? { background: ACCENT, color: '#04202a' } : { color: '#cbd5e1' }}
+                              aria-pressed={sel}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <Btn
+                      className="mt-3 w-full"
+                      onClick={() => setDesigns({ b, sel: b.allowedExperiences?.length ? b.allowedExperiences : EXPERIENCES.map((x) => x.id) })}
+                    >
+                      Diseños: {b.allowedExperiences?.length ? `${new Set(['classic', ...b.allowedExperiences]).size} de ${EXPERIENCES.length}` : 'todos'}
+                    </Btn>
                     <Btn
                       kind={on ? 'danger' : 'ok'}
-                      className="mt-4 w-full"
+                      className="mt-2 w-full"
                       onClick={() =>
                         (!on || confirm(`¿Suspender ${b.name}? Su equipo perderá el acceso y los QR dejarán de funcionar.`)) &&
                         run(async () => { await api('PATCH', `/super/businesses/${b.id}/status`, { active: !on }); await load(); })
@@ -153,6 +197,38 @@ export default function SuperAdmin() {
             <Field label="Contraseña" type="password" minLength={8} hint="Mínimo 8 caracteres" value={f.adminPassword} onChange={(e) => setF({ ...f, adminPassword: e.target.value })} required />
             <Btn kind="accent" className="py-3">Crear establecimiento</Btn>
           </form>
+        </Dialog>
+      )}
+      {designs && (
+        <Dialog title={`Diseños de ${designs.b.name}`} onClose={() => setDesigns(null)}>
+          <p className="mb-4 text-sm text-slate-400">Elige qué diseños puede asignar este establecimiento a sus mesas. El clásico siempre está disponible.</p>
+          <div className="grid gap-2">
+            {EXPERIENCES.map((x) => {
+              const on = x.id === 'classic' || designs.sel.includes(x.id);
+              return (
+                <button
+                  key={x.id}
+                  type="button"
+                  disabled={x.id === 'classic'}
+                  onClick={() => setDesigns({ ...designs, sel: on ? designs.sel.filter((i) => i !== x.id) : [...designs.sel, x.id] })}
+                  className="flex items-center gap-3 rounded-xl border p-3 text-left transition hover:bg-white/5 disabled:cursor-default"
+                  style={on ? { borderColor: ACCENT, background: ACCENT + '14' } : { borderColor: 'rgba(255,255,255,.1)' }}
+                  aria-pressed={on}
+                >
+                  <span className="h-10 w-10 shrink-0 rounded-lg border border-white/10" style={{ background: `linear-gradient(135deg, ${x.swatch[0]} 50%, ${x.swatch[1]} 50%)` }} />
+                  <span className="min-w-0 flex-1"><span className="block font-semibold">{x.name}</span><span className="block truncate text-xs text-slate-400">{x.description}</span></span>
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border text-sm font-bold" style={on ? { background: ACCENT, borderColor: ACCENT, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.2)' }}>{on ? '✓' : ''}</span>
+                </button>
+              );
+            })}
+          </div>
+          <Btn
+            kind="accent"
+            className="mt-5 w-full py-3"
+            onClick={() => run(async () => { await api('PATCH', `/super/businesses/${designs.b.id}/experiences`, { ids: designs.sel }); setDesigns(null); toast('Diseños actualizados'); await load(); })}
+          >
+            Guardar
+          </Btn>
         </Dialog>
       )}
       {node}

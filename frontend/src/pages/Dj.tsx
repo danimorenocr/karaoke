@@ -20,13 +20,6 @@ const Card = ({ title, count, children, className = '' }: { title: string; count
   </section>
 );
 
-const Chip = ({ ok, children }: { ok: boolean; children: ReactNode }) => (
-  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${ok ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' : 'border-white/10 bg-white/5 text-slate-400'}`}>
-    <span className={`h-2 w-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-    {children}
-  </span>
-);
-
 /** Pitido corto de aviso (puede no sonar si el navegador aun no tuvo interaccion con la pagina). */
 function beep() {
   try {
@@ -107,11 +100,11 @@ export default function Dj() {
     return () => clearTimeout(t);
   }, [tvStarted, tvConnected]);
   useEffect(() => {
-    if (!tvDown) { document.title = 'Karaoke'; return; }
+    if (!tvDown) { document.title = 'TONO'; return; }
     beep();
     let on = true;
-    const t = setInterval(() => { document.title = on ? '⚠️ TV DESCONECTADA' : 'Karaoke'; on = !on; }, 1000);
-    return () => { clearInterval(t); document.title = 'Karaoke'; };
+    const t = setInterval(() => { document.title = on ? '⚠️ TV DESCONECTADA' : 'TONO'; on = !on; }, 1000);
+    return () => { clearInterval(t); document.title = 'TONO'; };
   }, [tvDown]);
 
   const togglePause = () => {
@@ -174,17 +167,17 @@ export default function Dj() {
   );
 
   return (
-    <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Panel DJ" title={title} subtitle={subtitle} org={s.business.name} orgStatus={online ? 'Conectado' : 'Sin conexión'} links={links}>
+    <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Panel DJ" title={title} subtitle={subtitle} org={s.business.name} links={links}>
       {/* Estado y control de sesion */}
-      <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip ok={online}>{online ? 'Conectado' : 'Sin conexión'}</Chip>
-          <Chip ok={tvConnected}>TV {tvConnected ? 'conectada' : 'desconectada'}</Chip>
-          {session && <Chip ok={session.requestsOpen}>{session.requestsOpen ? 'Solicitudes abiertas' : 'Solicitudes bloqueadas'}</Chip>}
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-400">
-            {s.business.autoApprove ? 'Aprobación automática' : 'Aprobación manual'}
-          </span>
-        </div>
+      <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-white/[0.07] pb-5">
+        <p className="text-sm text-slate-400">
+          {[
+            online ? null : <b key="o" className="font-medium text-red-300">Sin conexión</b>,
+            <span key="t" className={tvConnected ? '' : 'text-amber-300'}>{tvConnected ? 'TV conectada' : 'TV desconectada'}</span>,
+            session ? <span key="s">{session.requestsOpen ? 'Solicitudes abiertas' : 'Solicitudes bloqueadas'}</span> : null,
+            <span key="a">{s.business.autoApprove ? 'Aprobación automática' : 'Aprobación manual'}</span>,
+          ].filter(Boolean).flatMap((x, i) => (i ? [<span key={`d${i}`} className="mx-2 text-slate-600">·</span>, x] : [x]))}
+        </p>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {session ? (
             <>
