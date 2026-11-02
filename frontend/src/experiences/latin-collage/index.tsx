@@ -29,6 +29,13 @@ export default function LatinCollage({ k }: ExperienceProps) {
     return () => clearTimeout(id);
   }, [typed, term, step, blocked, full]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Al pedir la cancion no se muestra pantalla de "listo": solo un aviso y se vuelve al buscador
+  useEffect(() => {
+    if (step !== 'done') return;
+    k.toast(`¡Pedida! ${k.doneText}`);
+    k.again();
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const current = state.current;
   const go = (t: Tab) => { setTab(t); window.scrollTo({ top: 0 }); };
 
@@ -47,7 +54,6 @@ export default function LatinCollage({ k }: ExperienceProps) {
           <form onSubmit={k.runSearch} className="lc-search">
             <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2.4" /><path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
             <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Buscar canción o pegar link de YouTube" enterKeyHint="search" />
-            {k.q.trim().length >= 3 && <button>Ir</button>}
           </form>
         )
       )}
@@ -80,17 +86,6 @@ export default function LatinCollage({ k }: ExperienceProps) {
           <GoogleFallback k={k} light />
           <button className="lc-link" onClick={() => k.setStep('ask')}>Buscar otra cosa</button>
         </>
-      )}
-
-      {step === 'done' && (
-        <div className="lc-card lc-stack lc-center">
-          <b className="lc-script">¡Listo!</b>
-          <p>{k.doneText}</p>
-          <div className="lc-actions">
-            <button className="lc-btn" onClick={k.again}>Pedir otra</button>
-            <button className="lc-btn alt" onClick={() => go('cola')}>Ver la cola</button>
-          </div>
-        </div>
       )}
 
       {step === 'error' && (

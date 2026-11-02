@@ -74,10 +74,10 @@ export class YoutubeService implements MusicProvider {
     return data;
   }
 
-  private embeddable = new Map<string, { at: number; ok: boolean; music: boolean }>();
+  private embeddable = new Map<string, { at: number; ok: boolean; music: boolean; title?: string }>();
 
   /** Devuelve solo los ids que se pueden reproducir en un reproductor incrustado (disponibles y no restringidos). */
-  async filterEmbeddable(rawIds: string[], musicOnly = false): Promise<string[]> {
+  async filterEmbeddable(rawIds: string[], musicOnly = false): Promise<{ ok: string[]; titles: Record<string, string> }> {
     const ids = [...new Set(rawIds.filter((i) => VIDEO_ID.test(i)))].slice(0, 20);
     const fresh = (id: string) => {
       const c = this.embeddable.get(id);
@@ -88,8 +88,9 @@ export class YoutubeService implements MusicProvider {
       let checked = false;
       if (process.env.YOUTUBE_API_KEY) {
         try {
-          const found = new Map((await this.videos(todo)).map((v) => [v.videoId, !!v.isMusic]));
-          todo.forEach((id) => this.embeddable.set(id, { at: Date.now(), ok: found.has(id), music: found.get(id) ?? false }));
+          const vids = await this.videos(todo);
+          const found = new Map(vids.map((v) => [v.videoId, v]));
+          todo.forEach((id) => this.embeddable.set(id, { at: Date.now(), ok: found.has(id), music: !!found.get(id)?.isMusic, title: found.get(id)?.title }));
           checked = true;
         } catch {
           // cuota agotada: se comprueba con oEmbed
@@ -102,7 +103,7 @@ export class YoutubeService implements MusicProvider {
               const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`, { signal: AbortSignal.timeout(4000) });
               // 401/404 = no incrustable o no existe. oEmbed no da categoria: se juzga por titulo y canal.
               const j: any = r.ok ? await r.json().catch(() => ({})) : {};
-              this.embeddable.set(id, { at: Date.now(), ok: r.ok, music: MUSIC_RE.test(`${j.title ?? ''} ${j.author_name ?? ''}`) });
+              this.embeddable.set(id, { at: Date.now(), ok: r.ok, music: MUSIC_RE.test(`${j.title ?? ''} ${j.author_name ?? ''}`), title: j.title });
             } catch {
               // sin respuesta: no se guarda, se deja pasar y se valida al pedirlo
               this.embeddable.set(id, { at: Date.now() - 6 * TTL_MS + 60_000, ok: true, music: true });
@@ -111,7 +112,10 @@ export class YoutubeService implements MusicProvider {
         );
       }
     }
-    return ids.filter((id) => fresh(id)?.ok && (!musicOnly || fresh(id)?.music));
+    const ok = ids.filter((id) => fresh(id)?.ok && (!musicOnly || fresh(id)?.music));
+    const titles: Record<string, string> = {};
+    ok.forEach((id) => { const t = fresh(id)?.title; if (t) titles[id] = t; });
+    return { ok, titles };
   }
 
   private key() {

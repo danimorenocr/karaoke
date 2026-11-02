@@ -10,7 +10,7 @@ class YoutubeController {
   @Get('validate')
   @Throttle({ default: { limit: 90, ttl: 60_000 } })
   async validate(@Query('ids') ids = '', @Query('music') music = '') {
-    return { ok: await this.yt.filterEmbeddable(ids.split(','), music === '1') };
+    return this.yt.filterEmbeddable(ids.split(','), music === '1');
   }
 
   @Get('search')

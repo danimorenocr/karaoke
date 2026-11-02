@@ -17,10 +17,13 @@ export interface GoogleItem {
 const GNAME = 'karaokeyt';
 const CALLBACK = '__karaokeCseReady';
 let scriptPromise: Promise<void> | null = null;
+let cbCount = 0; // cuantas veces ha avisado Google que termino una busqueda
 
 function loadScript(): Promise<void> {
   if (scriptPromise) return scriptPromise;
   scriptPromise = new Promise((resolve, reject) => {
+    // Forma oficial de recibir los resultados: se define antes de cargar cse.js
+    (window as any).__gcse = { searchCallbacks: { web: { ready: (...a: unknown[]) => (window as any)[CALLBACK]?.(...a) } } };
     const s = document.createElement('script');
     s.src = `https://cse.google.com/cse.js?cx=${GOOGLE_CSE_ID}`;
     s.async = true;
@@ -35,20 +38,27 @@ const VIDEO = /(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/|youtube\.com\/s
 
 /** Convierte lo que entrega Google en videos reales (descarta canales, playlists y otras paginas). */
 function parse(args: unknown[]): GoogleItem[] {
-  const lists = args.filter(Array.isArray) as any[][];
-  const results = lists.find((l) => l.some((r) => r && typeof r === 'object' && 'url' in r)) ?? [];
   const seen = new Set<string>();
   const out: GoogleItem[] = [];
-  for (const r of results) {
-    const id = String(r.url ?? '').match(VIDEO)?.[1];
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    out.push({
-      videoId: id,
-      title: String(r.titleNoFormatting ?? r.title ?? '').replace(/<[^>]+>/g, '').replace(/\s*-\s*YouTube\s*$/i, ''),
-      thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
-    });
-  }
+  const URL_KEYS = ['url', 'unescapedUrl', 'formattedUrl', 'visibleUrl', 'link'];
+  // Busca en cualquier parte de lo que entrega Google (el formato exacto cambia entre versiones)
+  const walk = (v: unknown, depth: number) => {
+    if (!v || typeof v !== 'object' || depth > 5) return;
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    const r = v as Record<string, unknown>;
+    const id = URL_KEYS.map((k) => (typeof r[k] === 'string' ? (r[k] as string).match(VIDEO)?.[1] : undefined)).find(Boolean);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push({
+        videoId: id,
+        title: String(r.titleNoFormatting ?? r.title ?? '').replace(/<[^>]+>/g, '').replace(/\s*-\s*YouTube\s*$/i, '') || 'Canción',
+        thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+      });
+      return;
+    }
+    Object.values(r).forEach((x) => walk(x, depth + 1));
+  };
+  walk(args.filter((a) => !(a instanceof Node)), 0);
   return out;
 }
 
@@ -67,15 +77,27 @@ export default function GoogleSearch({ query, mode, onResults, onError, onPick, 
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    (window as any)[CALLBACK] = (...args: unknown[]) => {
-      const items = parse(args);
+    // Verifica que la TV pueda reproducir los videos y solo muestra esos
+    const handle = (items: GoogleItem[]) => {
       onResults([]); // hasta verificar, no se muestra nada
-      if (!items.length) { onLoading?.(false); return true; }
-      // Solo se muestran los videos que la TV puede reproducir
+      if (!items.length) { onLoading?.(false); return; }
       pub('GET', `/youtube/validate?ids=${items.map((i) => i.videoId).join(',')}&music=1`)
-        .then((r: { ok: string[] }) => {
+        .then((r: { ok: string[]; titles?: Record<string, string> }) => {
           const ok = new Set(r.ok);
-          onResults(items.filter((i) => ok.has(i.videoId)));
+          const good = items.filter((i) => ok.has(i.videoId));
+          // Si Google no dio el titulo, se toma del texto del enlace que pinto en su bloque
+          const withTitles = () => {
+            const t = new Map<string, string>();
+            box.current?.querySelectorAll('a').forEach((a) => {
+              const id = idFromLink(a as HTMLAnchorElement);
+              const txt = (a.textContent ?? '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
+              if (id && txt && !t.has(id)) t.set(id, txt);
+            });
+            // titulo: el que da el backend (YouTube) > texto del enlace de Google > el que ya traia
+            return good.map((i) => ({ ...i, title: r.titles?.[i.videoId] || (i.title === 'Canción' ? t.get(i.videoId) : '') || i.title }));
+          };
+          onResults(withTitles());
+          [400, 1200, 2500].forEach((ms) => setTimeout(() => onResults(withTitles()), ms));
           onLoading?.(false);
           // Tambien se ocultan en el bloque propio de Google (los anuncios no se tocan)
           const hide = () =>
@@ -87,6 +109,33 @@ export default function GoogleSearch({ query, mode, onResults, onError, onPick, 
           setTimeout(hide, 400);
         })
         .catch(() => { onResults(items); onLoading?.(false); }); // si falla la verificacion se muestran igual; se valida al pedir
+    };
+
+    let lastCb = 0;
+    (window as any)[CALLBACK] = (...args: unknown[]) => {
+      if (args.length && Date.now() - lastCb < 300) return true; // Google puede avisar por dos vias
+      if (args.length) lastCb = Date.now();
+      cbCount++;
+      const items = parse(args);
+      console.log('[google-cse] resultados', items.length, args);
+      if (items.length) handle(items);
+      else {
+        // Google no entrego la lista en un formato conocido: se leen los enlaces que pinto en su bloque
+        onResults([]);
+        setTimeout(() => {
+          const seen = new Set<string>();
+          const found: GoogleItem[] = [];
+          box.current?.querySelectorAll('a').forEach((a) => {
+            const id = idFromLink(a as HTMLAnchorElement);
+            const txt = (a.textContent ?? '').trim();
+            if (!id || (seen.has(id) && !txt)) return;
+            if (seen.has(id)) { const f = found.find((x) => x.videoId === id)!; if (f.title === 'Canción') f.title = txt.replace(/\s*-\s*YouTube\s*$/i, ''); return; }
+            seen.add(id);
+            found.push({ videoId: id, title: (a.textContent ?? '').replace(/\s*-\s*YouTube\s*$/i, '').trim() || 'Canción', thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` });
+          });
+          handle(found);
+        }, 600);
+      }
       return true; // deja que Google muestre sus propios resultados
     };
   }, [onResults]);
@@ -103,18 +152,31 @@ export default function GoogleSearch({ query, mode, onResults, onError, onPick, 
           const el = (window as any).google?.search?.cse?.element?.getElement(GNAME);
           if (el) {
             onLoading?.(true);
-            el.clearAllResults?.(); // que no quede visible lo de la busqueda anterior
-            el.execute(mode === "KARAOKE" ? `${query} karaoke` : query);
-            // El aviso interno de Google no siempre llega: el esqueleto se quita en cuanto el bloque pinta
-            // resultados (o "sin resultados"), y como maximo a los 10 s.
+            const text = mode === "KARAOKE" ? `${query} karaoke` : query;
+            const before = cbCount;
+            let tries = 0;
+            let leido = false;
+            // Google guarda la ultima busqueda en el hash (#gsc.q=...): se limpia para que no se mezcle con la nueva
+            const fire = () => { tries++; try { if (location.hash.includes('gsc.')) history.replaceState(null, '', location.pathname + location.search); el.execute(text); } catch { /* se reintenta */ } };
+            fire();
+            // Google a veces ignora un execute() seguido de otro: si no avisa en 3 s se repite (hasta 3 veces);
+            // el esqueleto se quita cuando Google avisa que termino, y como maximo a los 12 s.
             const started = Date.now();
             clearInterval(poll);
             poll = setInterval(() => {
               const elapsed = Date.now() - started;
-              const painted = box.current?.querySelector('.gsc-webResult.gsc-result, .gs-no-results-result');
-              if ((painted && elapsed > 700) || elapsed > 10_000) {
+              if (cbCount > before) {
+                clearInterval(poll); // el aviso de Google ya quita el esqueleto tras validar los videos
+              } else if (elapsed > 3000 && !leido && [...(box.current?.querySelectorAll('a') ?? [])].some((a) => idFromLink(a as HTMLAnchorElement))) {
+                // Google pinto videos pero nunca aviso: se leen directamente del bloque
+                leido = true;
+                clearInterval(poll);
+                (window as any)[CALLBACK]?.();
+              } else if (elapsed > 12_000) {
                 clearInterval(poll);
                 onLoading?.(false);
+              } else if (tries < 3 && elapsed > tries * 3000) {
+                fire();
               }
             }, 300);
           }

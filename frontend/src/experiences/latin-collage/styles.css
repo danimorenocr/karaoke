@@ -79,9 +79,9 @@
 .lc-card .lc-link { color: var(--orange); text-shadow: none; }
 .lc-stars { display: flex; gap: 6px; justify-content: center; } .lc-stars button { font-size: 2.1rem; color: var(--ochre); text-shadow: 0 2px 0 #7a4b00; }
 
-.lc-nav { position: fixed; bottom: calc(var(--u) * 6.2); left: 50%; transform: translateX(-50%); width: var(--w); height: calc(var(--u) * 21); z-index: 20; display: flex; justify-content: space-around; align-items: center; padding: 0 calc(var(--u) * 4); background: none; }
-.lc-nav button { flex: 1; display: grid; justify-items: center; gap: 2px; color: #e9d6ad; font-family: var(--script); font-size: max(15px, calc(var(--u) * 5)); text-shadow: 0 2px 4px #000a; }
-.lc-nav button.on { color: var(--ochre); }
+.lc-nav { position: fixed; bottom: calc(var(--u) * 6.2); left: 50%; transform: translateX(-50%); width: var(--w); height: calc(var(--u) * 21); z-index: 20; display: flex; justify-content: space-around; align-items: center; padding: 0 calc(var(--u) * 4); gap: calc(var(--u) * 2); background: none; }
+.lc-nav button { flex: 1; display: grid; justify-items: center; align-content: center; gap: 2px; padding: calc(var(--u) * 2) 0; border-radius: calc(var(--u) * 4.5); background: rgba(31, 20, 14, .78); border: 1.5px solid rgba(233, 214, 173, .28); box-shadow: 0 4px 10px #0006; backdrop-filter: blur(6px); color: #e9d6ad; font-family: var(--script); font-size: max(15px, calc(var(--u) * 5)); text-shadow: 0 2px 4px #000a; }
+.lc-nav button.on { color: var(--ochre); background: rgba(52, 33, 20, .92); border-color: var(--ochre); }
 .lc-nav button.on .lc-ico::after { content: ''; position: absolute; left: 10%; right: 10%; bottom: -6px; height: 3px; border-radius: 3px; background: var(--ochre); }
 .lc-ico { position: relative; display: inline-block; } .lc-ico svg { width: calc(var(--u) * 8); height: calc(var(--u) * 8); min-width: 24px; min-height: 24px; }
 .lc-ico i { position: absolute; top: -6px; right: -12px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--ochre); color: var(--ink); font-style: normal; font-family: var(--sans); font-weight: 700; font-size: .72rem; display: grid; place-items: center; }

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { clientId, connectSocket, pub } from '../lib/api';
 import { useToast } from '../components/ui';
 import { GOOGLE_CSE_ID, GoogleItem } from '../components/GoogleSearch';
@@ -96,6 +96,7 @@ export function useKaraoke(token: string | undefined) {
     : pos > 0 ? `Vas en la posición #${pos} de la cola.` : 'Quedó en la cola.';
 
   // ---------- acciones ----------
+  const searchSeq = useRef(0);
   async function runSearch(e?: FormEvent) {
     e?.preventDefault();
     const t = q.trim();
@@ -107,10 +108,14 @@ export function useKaraoke(token: string | undefined) {
     setErrorMsg('');
     setPicked(null);
     setStep('searching');
+    const seq = ++searchSeq.current;
     try {
-      setResults(await pub('GET', `/public/${token}/search?q=${encodeURIComponent(t)}`));
+      const found = await pub('GET', `/public/${token}/search?q=${encodeURIComponent(t)}`);
+      if (seq !== searchSeq.current) return; // llego una respuesta vieja: ya hay una busqueda mas reciente
+      setResults(found);
       setStep('results');
     } catch (err: any) {
+      if (seq !== searchSeq.current) return;
       // Cuota agotada o busqueda no configurada: respaldo con Google si esta configurado
       if (GOOGLE_CSE_ID && (err.status === 429 || err.status === 503)) {
         setGoogleEver(true);
