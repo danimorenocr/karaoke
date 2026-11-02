@@ -267,3 +267,29 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 /* Sin contador de resultados ni selector "Ordenar por" */
 .karaoke-cse .gsc-result-info-container,
 .karaoke-cse .gsc-orderby-container { display: none !important; }
+
+/* Mensajes de la conversacion del comensal: aparecen suavemente */
+.msg-in { animation: msg-in .28s ease-out both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* === Bloque de Google en modo claro (pantalla del comensal) === */
+.karaoke-cse.cse-light { --cse-line: rgba(0, 0, 0, 0.1); color: #262626; }
+.karaoke-cse.cse-light .gsc-results .gsc-webResult.gsc-result:not(.gsc-promotion) { background-color: #fff !important; }
+.karaoke-cse.cse-light .gsc-results .gsc-webResult.gsc-result:not(.gsc-promotion):hover { background-color: #f5f5f5 !important; }
+.karaoke-cse.cse-light .gsc-results .gsc-webResult.gsc-result.gsc-promotion { background-color: #f0fdfa !important; }
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:link,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:visited,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title b,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:link b,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:visited b { color: #171717; }
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:hover,
+.karaoke-cse.cse-light .gs-webResult.gs-result a.gs-title:hover b { color: #0f766e; }
+.karaoke-cse.cse-light .gs-promotion .gs-title:link,
+.karaoke-cse.cse-light .gs-promotion .gs-title:link *,
+.karaoke-cse.cse-light .gs-promotion .gs-title:visited,
+.karaoke-cse.cse-light .gs-promotion .gs-title:visited * { color: #171717; }
+.karaoke-cse.cse-light .gs-promotion .gs-snippet,
+.karaoke-cse.cse-light .gs-promotion .gs-snippet a:link { color: #525252; }
+.karaoke-cse.cse-light .gs-promotion .gs-visibleUrl { color: #0f766e; }
+.karaoke-cse.cse-light .gsc-results .gsc-cursor-box .gsc-cursor-page { color: #404040; }

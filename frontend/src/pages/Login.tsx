@@ -1,9 +1,12 @@
 import { FormEvent, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { api, auth, SessionUser } from '../lib/api';
-import { ACCENT, Btn, Field } from '../components/kit';
+import { Headphones } from '../components/art';
+import { ACCENT, Brand, Btn } from '../components/kit';
 
 export const homeFor = (role: SessionUser['role']) => (role === 'SUPER_ADMIN' ? '/super-admin' : role === 'ADMIN' ? '/admin' : '/dj');
+
+const inputCls = 'w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-300/50';
 
 export default function Login() {
   const nav = useNavigate();
@@ -34,36 +37,52 @@ export default function Login() {
   }
 
   return (
-    <div className="grid min-h-dvh place-items-center bg-[#050d18] px-4 py-10 text-slate-100" style={{ backgroundImage: `radial-gradient(60% 45% at 50% 0%, ${ACCENT}26, transparent 70%)` }}>
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl text-3xl" style={{ background: ACCENT + '22', boxShadow: `0 0 40px ${ACCENT}33` }}>🎤</div>
-          <h1 className="text-3xl font-extrabold tracking-tight">Karaoke</h1>
-          <p className="mt-1 text-sm text-slate-400">Ingresa a tu panel de administración o DJ</p>
+    <div className="grid min-h-dvh bg-[#060b14] text-slate-100 lg:grid-cols-[1.1fr_1fr]" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      {/* Panel de marca */}
+      <section className="relative hidden overflow-hidden border-r border-white/[0.07] lg:block" style={{ background: `radial-gradient(70% 60% at 70% 30%, ${ACCENT}26, transparent 70%), radial-gradient(60% 50% at 10% 100%, #6d28d933, transparent 70%), linear-gradient(180deg,#08111e,#050912)` }}>
+        <div className="absolute left-12 top-12"><Brand size="lg" /></div>
+        <Headphones className="absolute left-1/2 top-[34%] w-[34rem] max-w-[80%] -translate-x-1/2 drop-shadow-[0_0_60px_rgba(34,216,234,.25)]" />
+        <div className="absolute inset-x-12 bottom-14">
+          <p className="text-5xl leading-tight text-slate-100" style={{ fontFamily: "'Caveat', cursive" }}>
+            Tu karaoke,<br />tu estilo <span style={{ color: ACCENT }}>♡</span>
+          </p>
+          <p className="mt-4 max-w-sm text-[15px] text-slate-400">Administra tus mesas, personaliza la experiencia de cada una y deja que la música haga el resto.</p>
         </div>
+      </section>
 
-        <form onSubmit={submit} className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] p-6 backdrop-blur">
-          <Field label="Correo" type="email" autoComplete="username" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-          <div className="relative">
-            <Field label="Contraseña" type={show ? 'text' : 'password'} autoComplete="current-password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            <button type="button" onClick={() => setShow((v) => !v)} className="absolute bottom-2.5 right-3 text-xs font-semibold text-slate-400 hover:text-slate-200">
-              {show ? 'Ocultar' : 'Mostrar'}
-            </button>
-          </div>
+      {/* Formulario */}
+      <main className="flex items-center justify-center px-5 py-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 lg:hidden"><Brand size="lg" /></div>
+          <div className="text-xs font-semibold uppercase tracking-[.3em]" style={{ color: ACCENT }}>Bienvenido</div>
+          <h1 className="mt-2 text-4xl font-extrabold tracking-tight">Inicia sesión</h1>
+          <p className="mt-2 text-sm text-slate-400">Ingresa a tu panel de administración o DJ.</p>
 
-          {error && (
-            <div className="rounded-xl border border-red-400/30 bg-red-500/15 p-3 text-sm text-red-200" role="alert">{error}</div>
-          )}
+          <form onSubmit={submit} className="mt-8 space-y-4">
+            <label className="grid gap-1.5 text-sm">
+              <span className="font-medium text-slate-300">Correo</span>
+              <input className={inputCls} type="email" autoComplete="username" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            </label>
+            <label className="relative grid gap-1.5 text-sm">
+              <span className="font-medium text-slate-300">Contraseña</span>
+              <input className={`${inputCls} pr-24`} type={show ? 'text' : 'password'} autoComplete="current-password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <button type="button" onClick={() => setShow((v) => !v)} className="absolute bottom-3 right-4 text-xs font-semibold text-slate-400 hover:text-slate-200">
+                {show ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </label>
 
-          <Btn kind="accent" className="w-full py-3 text-base" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Btn>
-        </form>
+            {error && <div className="rounded-xl border border-red-400/30 bg-red-500/15 p-3 text-sm text-red-200" role="alert">{error}</div>}
 
-        <p className="mt-6 text-center text-xs text-slate-500">
-          ¿Eres cliente? Escanea el código QR de tu mesa para pedir canciones.
-          <br />
-          <Link to="/" className="mt-2 inline-block text-slate-400 hover:text-slate-200">← Volver al inicio</Link>
-        </p>
-      </div>
+            <Btn kind="accent" className="w-full !rounded-2xl py-3.5 text-base font-bold" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Btn>
+          </form>
+
+          <p className="mt-8 text-center text-xs leading-relaxed text-slate-500">
+            ¿Eres cliente? Escanea el código QR de tu mesa para pedir canciones.
+            <br />
+            <Link to="/" className="mt-2 inline-block text-slate-400 hover:text-slate-200">← Volver al inicio</Link>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

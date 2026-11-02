@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.gateway';
+import { EXPERIENCE_IDS } from '../experiences';
 
 const newToken = () => randomBytes(9).toString('base64url');
 const slugify = (s: string) =>
@@ -33,6 +34,7 @@ class TableDto {
 class UpdateTableDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) name?: string;
   @IsOptional() @IsBoolean() active?: boolean;
+  @IsOptional() @IsIn([...EXPERIENCE_IDS]) experienceId?: string;
 }
 class CreateStaffDto {
   @IsString() @MinLength(2) name: string;

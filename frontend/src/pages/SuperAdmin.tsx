@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { useAction, useToast } from '../components/ui';
-import { Badge, Btn, Card, Empty, Field, Shell } from '../components/kit';
+import { ACCENT, Badge, Btn, Card, Dialog, Empty, Field, Icon, NavItem, Shell } from '../components/kit';
 
 const EMPTY = { name: '', adminName: '', adminEmail: '', adminPassword: '' };
 
 const Stat = ({ label, value }: { label: string; value: number | string }) => (
-  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] to-white/[0.02] p-5">
     <div className="text-3xl font-extrabold">{value}</div>
     <div className="mt-1 text-xs uppercase tracking-wider text-slate-400">{label}</div>
   </div>
@@ -49,8 +49,21 @@ function Health() {
   );
 }
 
+type Tab = 'overview' | 'businesses';
+const NAV: NavItem[] = [
+  { id: 'overview', label: 'Resumen', icon: 'home' },
+  { id: 'businesses', label: 'Establecimientos', icon: 'store' },
+];
+const HERO: Record<Tab, [string, string]> = {
+  overview: ['Resumen', 'Estado general de la plataforma y de todos los establecimientos.'],
+  businesses: ['Establecimientos', 'Crea, suspende y reactiva los bares que usan Sonora.'],
+};
+
 export default function SuperAdmin() {
+  const [tab, setTab] = useState<Tab>('overview');
   const [list, setList] = useState<any[] | null>(null);
+  const [q, setQ] = useState('');
+  const [creating, setCreating] = useState(false);
   const [f, setF] = useState(EMPTY);
   const { toast, node } = useToast();
   const run = useAction(toast);
@@ -60,66 +73,88 @@ export default function SuperAdmin() {
 
   const active = list?.filter((b) => b.status === 'ACTIVE').length ?? 0;
   const sum = (k: 'tables' | 'users' | 'requests') => list?.reduce((n, b) => n + b._count[k], 0) ?? 0;
+  const shown = useMemo(() => (list ?? []).filter((b) => b.name.toLowerCase().includes(q.trim().toLowerCase())), [list, q]);
+  const [title, subtitle] = HERO[tab];
 
   return (
-    <Shell title="Super administrador" subtitle="Gestión de establecimientos">
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Stat label="Bares activos" value={`${active}/${list?.length ?? 0}`} />
-        <Stat label="Mesas" value={sum('tables')} />
-        <Stat label="Usuarios" value={sum('users')} />
-        <Stat label="Solicitudes" value={sum('requests')} />
-      </div>
+    <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Super administración" title={title} subtitle={subtitle} org="Plataforma Sonora" orgStatus="En línea">
+      {tab === 'overview' && (
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <Stat label="Bares activos" value={`${active}/${list?.length ?? 0}`} />
+            <Stat label="Mesas" value={sum('tables')} />
+            <Stat label="Usuarios" value={sum('users')} />
+            <Stat label="Solicitudes" value={sum('requests')} />
+          </div>
+          <Health />
+        </>
+      )}
 
-      <Health />
+      {tab === 'businesses' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex min-w-60 flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3.5 text-slate-400 focus-within:border-white/30">
+              <Icon name="search" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar establecimiento..." className="w-full bg-transparent text-slate-100 outline-none placeholder:text-slate-500" />
+            </label>
+            <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-2xl px-6 py-3.5 font-bold text-[#04202a] shadow-lg transition hover:brightness-110 active:scale-[.98]" style={{ background: ACCENT, boxShadow: `0 8px 30px ${ACCENT}44` }}>
+              <Icon name="plus" />Nuevo establecimiento
+            </button>
+          </div>
 
-      <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
-        <Card title="Nuevo establecimiento">
+          {!list ? (
+            <Card><Empty>Cargando...</Empty></Card>
+          ) : shown.length === 0 ? (
+            <Card><Empty>{list.length === 0 ? 'Aún no hay establecimientos. Crea el primero.' : 'No hay establecimientos que coincidan.'}</Empty></Card>
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
+              {shown.map((b) => {
+                const on = b.status === 'ACTIVE';
+                return (
+                  <article key={b.id} className={`rounded-3xl border border-white/10 p-5 shadow-xl ${on ? '' : 'opacity-60'}`} style={{ background: `radial-gradient(90% 90% at 100% 0%, ${on ? ACCENT + '1f' : '#ef444422'}, transparent 60%), #0b1322` }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-sm"><i className={`h-2.5 w-2.5 rounded-full ${on ? 'bg-emerald-400' : 'bg-red-500'}`} />{on ? 'Activo' : 'Suspendido'}</span>
+                      <span className="text-xs text-slate-500">desde {new Date(b.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <h3 className="mt-3 truncate text-2xl font-extrabold tracking-tight">{b.name}</h3>
+                    <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      {([['Mesas', b._count.tables], ['Usuarios', b._count.users], ['Solicitudes', b._count.requests]] as const).map(([k, v]) => (
+                        <div key={k} className="rounded-xl bg-white/[0.05] py-2.5"><dd className="text-xl font-bold">{v}</dd><dt className="text-[11px] uppercase tracking-wider text-slate-400">{k}</dt></div>
+                      ))}
+                    </dl>
+                    <Btn
+                      kind={on ? 'danger' : 'ok'}
+                      className="mt-4 w-full"
+                      onClick={() =>
+                        (!on || confirm(`¿Suspender ${b.name}? Su equipo perderá el acceso y los QR dejarán de funcionar.`)) &&
+                        run(async () => { await api('PATCH', `/super/businesses/${b.id}/status`, { active: !on }); await load(); })
+                      }
+                    >
+                      {on ? 'Suspender' : 'Activar'}
+                    </Btn>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {creating && (
+        <Dialog title="Nuevo establecimiento" onClose={() => setCreating(false)}>
           <form
             className="grid gap-4"
-            onSubmit={(e) => { e.preventDefault(); run(async () => { await api('POST', '/super/businesses', f); setF(EMPTY); toast('Establecimiento creado'); await load(); }); }}
+            onSubmit={(e) => { e.preventDefault(); run(async () => { await api('POST', '/super/businesses', f); setF(EMPTY); setCreating(false); toast('Establecimiento creado'); await load(); }); }}
           >
-            <Field label="Nombre del bar" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
+            <Field label="Nombre del bar" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required autoFocus />
             <div className="border-t border-white/10 pt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">Cuenta del administrador</div>
             <Field label="Nombre" value={f.adminName} onChange={(e) => setF({ ...f, adminName: e.target.value })} required />
             <Field label="Correo" type="email" value={f.adminEmail} onChange={(e) => setF({ ...f, adminEmail: e.target.value })} required />
             <Field label="Contraseña" type="password" minLength={8} hint="Mínimo 8 caracteres" value={f.adminPassword} onChange={(e) => setF({ ...f, adminPassword: e.target.value })} required />
-            <Btn kind="accent">Crear establecimiento</Btn>
+            <Btn kind="accent" className="py-3">Crear establecimiento</Btn>
           </form>
-        </Card>
-
-        <Card title="Establecimientos" right={<Badge>{list?.length ?? 0}</Badge>}>
-          {!list ? (
-            <Empty>Cargando...</Empty>
-          ) : list.length === 0 ? (
-            <Empty>Aún no hay establecimientos. Crea el primero.</Empty>
-          ) : (
-            <div className="divide-y divide-white/5">
-              {list.map((b) => (
-                <div key={b.id} className="flex flex-wrap items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1 basis-48">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-semibold">{b.name}</span>
-                      <Badge tone={b.status === 'ACTIVE' ? 'green' : 'red'}>{b.status === 'ACTIVE' ? 'Activo' : 'Suspendido'}</Badge>
-                    </div>
-                    <div className="mt-0.5 text-xs text-slate-500">
-                      {b._count.tables} mesas · {b._count.users} usuarios · {b._count.requests} solicitudes · creado {new Date(b.createdAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <Btn
-                    kind={b.status === 'ACTIVE' ? 'danger' : 'ok'}
-                    onClick={() =>
-                      (b.status !== 'ACTIVE' || confirm(`¿Suspender ${b.name}? Su equipo perderá el acceso y los QR dejarán de funcionar.`)) &&
-                      run(async () => { await api('PATCH', `/super/businesses/${b.id}/status`, { active: b.status !== 'ACTIVE' }); await load(); })
-                    }
-                  >
-                    {b.status === 'ACTIVE' ? 'Suspender' : 'Activar'}
-                  </Btn>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+        </Dialog>
+      )}
       {node}
     </Shell>
   );

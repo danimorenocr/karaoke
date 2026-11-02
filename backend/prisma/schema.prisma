@@ -94,6 +94,8 @@ model Table {
   active     Boolean  @default(true)
   // Token aleatorio del QR. Rotarlo revoca el QR anterior.
   qrToken    String   @unique
+  // Diseno del cliente para esta mesa (id del catalogo de experiencias del frontend)
+  experienceId String @default("classic")
   // Al desvincular la mesa, el cliente deja de ver lo pedido antes de esta fecha
   historyClearedAt DateTime?
   createdAt  DateTime @default(now())

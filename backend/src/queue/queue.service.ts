@@ -159,7 +159,7 @@ export class QueueService {
     const session = await this.activeSession(this.prisma, b.id);
     const out = {
       business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor, searchMode: b.searchMode },
-      table: { name: table.name },
+      table: { name: table.name, experienceId: table.experienceId },
       session: session ? { open: session.requestsOpen } : null,
       maxPending: b.maxPendingPerTable,
       current: null as any,

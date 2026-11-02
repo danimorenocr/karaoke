@@ -63,7 +63,7 @@ function idFromLink(a: HTMLAnchorElement): string | undefined {
   }
 }
 
-export default function GoogleSearch({ query, mode, onResults, onError, onPick, onLoading }: { query: string; mode: "KARAOKE" | "ANY"; onResults: (items: GoogleItem[]) => void; onError: (msg: string) => void; onPick: (item: GoogleItem) => void; onLoading?: (loading: boolean) => void }) {
+export default function GoogleSearch({ query, mode, onResults, onError, onPick, onLoading, light }: { query: string; mode: "KARAOKE" | "ANY"; onResults: (items: GoogleItem[]) => void; onError: (msg: string) => void; onPick: (item: GoogleItem) => void; onLoading?: (loading: boolean) => void; light?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -130,7 +130,7 @@ export default function GoogleSearch({ query, mode, onResults, onError, onPick, 
   return (
     <div
       ref={box}
-      className="karaoke-cse mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-100"
+      className={light ? 'karaoke-cse cse-light mt-3 overflow-hidden rounded-2xl border border-black/10 bg-neutral-50 p-3 text-neutral-900' : 'karaoke-cse mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-100'}
       // Tocar un resultado pide la cancion en vez de abrir YouTube; los anuncios siguen funcionando normal
       onClickCapture={(e) => {
         const a = (e.target as HTMLElement).closest('a');
