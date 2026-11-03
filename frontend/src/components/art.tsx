@@ -84,6 +84,8 @@ export function tableTheme(id: string): TableTheme {
       return { bg: 'radial-gradient(90% 90% at 80% 20%,#6d28d9aa,transparent 60%),linear-gradient(135deg,#150b2b,#0a0818)', dark: true, art: <NeonNote className="absolute right-2 top-8 h-40 w-40 drop-shadow-[0_0_24px_#a78bfa]" /> };
     case 'latin-collage':
       return { bg: "linear-gradient(90deg,#0b2a35f2 20%,#0b2a3566),url('/latin-collage-bg.jpg') center 30% / cover", dark: true, art: null };
+    case 'harry-potter':
+      return { bg: "linear-gradient(90deg,#1a0f07f2 25%,#1a0f0744),url('/hp-bg.jpg') 70% 36% / cover", dark: true, art: null };
     case 'editorial':
       return { bg: 'linear-gradient(135deg,#ebe3d1,#c9d1bd)', dark: false, art: <Leaves className="absolute -right-2 -top-2 h-60 w-60" /> };
     default:

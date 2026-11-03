@@ -18,6 +18,7 @@ export const EXPERIENCES: ExperienceMeta[] = [
   { id: 'golden-vinyl', name: 'Golden Vinyl', description: 'Tocadiscos de vinilo dorado, cálido y elegante.', swatch: ['#1a1208', '#e0b04a'] },
   { id: 'neon-world', name: 'Neon World', description: 'Futurista: neón sobre fondo oscuro.', swatch: ['#07071a', '#22d3ee'] },
   { id: 'latin-collage', name: 'Latin Collage', description: 'Collage latino de papel y pintura: turquesa, naranja y crema.', swatch: ['#1f4e5f', '#d9582b'] },
+  { id: 'harry-potter', name: 'Harry Potter', description: 'Pergamino, castillo y lechuza: sepia, dorado y granate.', swatch: ['#2b1a0d', '#d9a441'] },
   { id: 'editorial', name: 'Editorial', description: 'Tipografía de revista, papel y tinta.', swatch: ['#f4efe6', '#c8321e'] },
 ];
 
@@ -26,6 +27,7 @@ const loaders: Record<string, () => Promise<{ default: ComponentType<ExperienceP
   'golden-vinyl': () => import('./golden-vinyl'),
   'neon-world': () => import('./neon-world'),
   'latin-collage': () => import('./latin-collage'),
+  'harry-potter': () => import('./harry-potter'),
   editorial: () => import('./editorial'),
 };
 
