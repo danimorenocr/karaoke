@@ -118,7 +118,7 @@ export default function Landing() {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-3">
           <a href="#top" aria-label="TONO"><img src="/logo.png" alt="TONO" className="h-11 w-auto transition-transform hover:scale-105" /></a>
           <nav className="flex items-center gap-5 text-[13px]" style={{ color: C.mute }}>
-            {[['#como', 'Cómo funciona'], ['#funciones', 'Funciones'], ['#precios', 'Precios'], ['#preguntas', 'Preguntas']].map(([h, l]) => <a key={h} href={h} className="ld-link hidden md:block">{l}</a>)}
+            {[['#como', 'Cómo funciona'], ['#demo', 'Demo'], ['#funciones', 'Funciones'], ['#precios', 'Precios'], ['#preguntas', 'Preguntas']].map(([h, l]) => <a key={h} href={h} className="ld-link hidden md:block">{l}</a>)}
             <Link to="/login" className="ld-link">Entrar</Link>
             <Cta><Wa />Hablemos</Cta>
           </nav>
@@ -193,6 +193,17 @@ export default function Landing() {
               </li></Rv>
             ))}
           </ol>
+        </section>
+
+        {/* Demo */}
+        <section id="demo" className="mx-auto max-w-5xl scroll-mt-16 px-5 py-20">
+          <Rv><Eyebrow>Demo</Eyebrow><H2>Mírala funcionando en 47 segundos.</H2></Rv>
+          <Rv d={0.15}>
+            <div className="ld-lift mt-10 overflow-hidden rounded-2xl border" style={{ borderColor: `${C.ac}55`, background: '#0b0b12', boxShadow: `0 30px 80px -30px ${C.ac}55` }}>
+              <video src="/demo-tono.mp4" poster="/demo-tono-poster.jpg" controls playsInline preload="metadata" className="block h-auto w-full" />
+            </div>
+            <p className="mt-4 text-center text-[13px]" style={{ color: C.mute }}>Grabada del producto real, con narración en español.</p>
+          </Rv>
         </section>
 
         {/* Funciones */}
