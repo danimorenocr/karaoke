@@ -14,7 +14,7 @@ export interface ExperienceMeta {
 }
 
 export const EXPERIENCES: ExperienceMeta[] = [
-  { id: 'classic', name: 'Clásica', description: 'Conversación minimalista en modo claro.', swatch: ['#ffffff', '#111827'] },
+  { id: 'classic', name: 'Clásica', description: 'Conversación minimalista con la identidad de Tono: noche y lavanda.', swatch: ['#05060a', '#a9b8ff'] },
   { id: 'golden-vinyl', name: 'Golden Vinyl', description: 'Tocadiscos de vinilo dorado, cálido y elegante.', swatch: ['#1a1208', '#e0b04a'] },
   { id: 'neon-world', name: 'Neon World', description: 'Futurista: neón sobre fondo oscuro.', swatch: ['#07071a', '#22d3ee'] },
   { id: 'latin-collage', name: 'Latin Collage', description: 'Collage latino de papel y pintura: turquesa, naranja y crema.', swatch: ['#1f4e5f', '#d9582b'] },
