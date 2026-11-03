@@ -1,9 +1,8 @@
 import { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { auth } from '../lib/api';
-import { Headphones } from './art';
 
-export const ACCENT = '#22d8ea';
+export const ACCENT = '#a9b8ff';
 
 /** Iconos de linea del panel. */
 const ICONS = {
@@ -26,6 +25,23 @@ const ICONS = {
   tv: 'M3 6h18v12H3zM8 21h8',
   menu: 'M4 6h16M4 12h16M4 18h16',
   left: 'M15 6l-6 6 6 6',
+  card: 'M3 6h18v12H3zM3 10h18M7 15h3',
+  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  x: 'M7 7l10 10M17 7L7 17',
+  up: 'M12 19V5M6 11l6-6 6 6',
+  downArrow: 'M12 5v14M6 13l6 6 6-6',
+  play: 'M7 4.5v15l12-7.5z',
+  pause: 'M8 5v14M16 5v14',
+  reload: 'M20 11a8 8 0 10-2.3 5.7M20 4v7h-7',
+  skip: 'M5 5v14l10-7zM19 5v14',
+  mic: 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM6 11a6 6 0 0012 0M12 17v4',
+  music: 'M9 18V5l11-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zM20 16a3 3 0 11-6 0 3 3 0 016 0z',
+  warn: 'M12 3l10 18H2zM12 10v5M12 18h.01',
+  clock: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
+  heart: 'M12 20s-8-5-8-11a4.5 4.5 0 018-2.7A4.5 4.5 0 0120 9c0 6-8 11-8 11z',
+  shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+  back: 'M19 12H5M11 6l-6 6 6 6',
   dj: 'M3 14a9 9 0 0118 0M3 14v3a2 2 0 002 2h1v-6H5a2 2 0 00-2 1zM21 14v3a2 2 0 01-2 2h-1v-6h1a2 2 0 012 1z',
 } as const;
 export type IconName = keyof typeof ICONS;
@@ -62,9 +78,9 @@ export function Shell({
   const logout = () => { auth.clear(); location.href = '/login'; };
 
   return (
-    <div className="min-h-screen bg-[#060b14] text-slate-100" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+    <div className="min-h-screen bg-[#05060a] text-slate-100" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
       {/* Barra lateral (escritorio) */}
-      <aside className={`fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/[0.07] bg-[#070d17] ${open ? 'lg:flex' : ''}`}>
+      <aside className={`fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/[0.07] bg-[#08090e] ${open ? 'lg:flex' : ''}`}>
         <div className="relative px-5 pb-6 pt-7">
           <Brand />
           <button onClick={toggle} className="absolute right-2 top-2 rounded-lg p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-slate-200" aria-label="Cerrar barra lateral" title="Cerrar barra lateral"><Icon name="left" className="h-4 w-4" /></button>
@@ -95,7 +111,7 @@ export function Shell({
 
       <div className={open ? 'lg:pl-56' : ''}>
         {/* Barra superior */}
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-white/[0.07] bg-[#060b14]/90 px-4 py-3.5 backdrop-blur sm:px-8">
+        <header className="sticky top-0 z-20 flex items-center gap-3 bg-[#05060a]/90 px-4 py-3.5 backdrop-blur sm:px-8">
           {!open && (
             <button onClick={toggle} className="hidden rounded-xl p-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white lg:block" aria-label="Abrir barra lateral" title="Abrir barra lateral"><Icon name="menu" /></button>
           )}
@@ -112,7 +128,7 @@ export function Shell({
             {menu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
-                <div className="absolute right-0 top-14 z-20 w-56 rounded-2xl border border-white/10 bg-[#0b1322] p-2 shadow-2xl" role="menu">
+                <div className="absolute right-0 top-14 z-20 w-56 rounded-2xl border border-white/10 bg-[#0d1017] p-2 shadow-2xl" role="menu">
                   <div className="px-3 py-2 text-xs text-slate-400">{user?.role === 'SUPER_ADMIN' ? 'Super administrador' : user?.role === 'ADMIN' ? 'Administrador' : 'DJ'}</div>
                   <button onClick={logout} className="w-full rounded-xl px-3 py-2.5 text-left text-sm text-red-300 hover:bg-red-500/10" role="menuitem">Cerrar sesión</button>
                 </div>
@@ -131,19 +147,18 @@ export function Shell({
         </nav>
 
         {/* Cabecera */}
-        <section className="relative overflow-hidden border-b border-white/[0.07]" style={{ background: `radial-gradient(60% 120% at 85% 0%, ${ACCENT}22, transparent 70%), linear-gradient(180deg,#08111e,#060b14)` }}>
-          <div className="relative z-10 px-5 py-9 sm:px-8 sm:py-11">
-            <div className="text-xs font-semibold uppercase tracking-[.3em]" style={{ color: ACCENT }}>{eyebrow}</div>
-            <h1 className="mt-3 text-4xl font-extrabold tracking-tight sm:text-5xl">{title}</h1>
+        <section className="relative overflow-hidden" style={{ background: `radial-gradient(50% 140% at 90% 0%, ${ACCENT}14, transparent 70%)` }}>
+          <div className="relative z-10 px-5 pb-4 pt-9 sm:px-8 sm:pt-11">
+            <div className="text-xs font-bold uppercase tracking-[.25em]" style={{ color: ACCENT }}>{eyebrow}</div>
+            <h1 className="mt-3 text-4xl font-black tracking-tight sm:text-6xl" style={{ color: '#f5ecdc' }}>{title}</h1>
             <p className="mt-2 max-w-xl text-[15px] text-slate-300">{subtitle}</p>
           </div>
-          <Headphones className="pointer-events-none absolute -top-2 right-[18%] hidden h-[115%] w-auto opacity-90 md:block" />
           <p className="pointer-events-none absolute right-8 top-1/2 hidden -translate-y-1/2 -rotate-6 text-right text-3xl leading-tight text-slate-200 xl:block" style={{ fontFamily: "'Caveat', cursive" }}>
-            Tu karaoke,<br />tu estilo <span style={{ color: ACCENT }}>♡</span>
+            Tu karaoke,<br />tu estilo <span style={{ color: ACCENT }}><Icon name="heart" className="inline h-7 w-7 align-[-.1em]" /></span>
           </p>
         </section>
 
-        <main className="px-5 py-7 sm:px-8">{children}</main>
+        <main key={active} className="shell-main page-in px-5 py-7 sm:px-8">{children}</main>
       </div>
     </div>
   );
@@ -158,7 +173,7 @@ export function Dialog({ title, onClose, children, wide = false }: { title: stri
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
-      <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-md'} rounded-3xl border border-white/10 bg-[#0b1322] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-md'} rounded-3xl border border-white/10 bg-[#0d1017] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
           <h2 className="text-lg font-bold">{title}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Cerrar"><Icon name="close" className="h-5 w-5" /></button>
@@ -186,7 +201,7 @@ export function Card({ title, right, children, className = '' }: { title?: strin
 export function Btn({ kind = 'ghost', className = '', ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { kind?: 'ghost' | 'accent' | 'danger' | 'ok' }) {
   const styles = {
     ghost: 'bg-white/10 hover:bg-white/15 text-slate-100',
-    accent: 'text-[#04202a] hover:brightness-110',
+    accent: 'text-[#0b1030] hover:brightness-110',
     ok: 'bg-emerald-500/90 hover:bg-emerald-400 text-[#032016]',
     danger: 'bg-red-500/15 hover:bg-red-500/25 text-red-300',
   }[kind];
@@ -232,7 +247,7 @@ export function Badge({ tone = 'slate', children }: { tone?: 'slate' | 'green' |
     green: 'bg-emerald-400/15 text-emerald-300',
     red: 'bg-red-400/15 text-red-300',
     amber: 'bg-amber-400/15 text-amber-300',
-    teal: 'bg-teal-400/15 text-teal-300',
+    teal: 'bg-indigo-300/15 text-indigo-300',
   }[tone];
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${t}`}>{children}</span>;
 }

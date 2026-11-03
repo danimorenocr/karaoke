@@ -55,10 +55,10 @@ export class AuthGuard implements CanActivate {
     }
     const u = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      include: { business: { select: { status: true } } },
+      include: { business: { select: { status: true, paidUntil: true } } },
     });
     if (!u || !u.active) throw new UnauthorizedException('Usuario inactivo');
-    if (u.business && u.business.status !== 'ACTIVE') throw new ForbiddenException('Establecimiento suspendido');
+    if (u.business && (u.business.status !== 'ACTIVE' || (u.business.paidUntil && u.business.paidUntil < new Date()))) throw new ForbiddenException('Establecimiento suspendido');
     return { id: u.id, role: u.role, businessId: u.businessId, name: u.name };
   }
 }

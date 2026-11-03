@@ -28,6 +28,10 @@ enum SearchProvider {
 enum BusinessStatus {
   ACTIVE
   SUSPENDED
+  // Se registro solo y aun no paga: no puede entrar hasta que se confirme el pago
+  PENDING_PAYMENT
+  // Dijo que ya pago: el super admin debe revisarlo y confirmarlo
+  PAYMENT_REVIEW
 }
 
 enum SessionStatus {
@@ -63,6 +67,11 @@ model Business {
   name              String
   slug              String         @unique
   logoUrl           String?
+  // WhatsApp de contacto y plan elegido al registrarse (STANDARD | CUSTOM)
+  phone             String?
+  plan              String?
+  // Hasta cuando esta pagado; al vencer se suspende solo. null = sin vencimiento
+  paidUntil         DateTime?
   // Imagen que la TV muestra entre canciones (data URL, ya reducida en el navegador)
   tvBanner          String?        @db.Text
   tvBannerAt        DateTime?
@@ -77,6 +86,7 @@ model Business {
   searchProvider    SearchProvider @default(YOUTUBE)
   createdAt         DateTime       @default(now())
 
+  payments Payment[]
   users    User[]
   tables   Table[]
   sessions KaraokeSession[]
@@ -95,6 +105,7 @@ model User {
   createdAt    DateTime @default(now())
 
   business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  resets   PasswordReset[]
 
   @@index([businessId])
 }
@@ -189,4 +200,36 @@ model SearchCache {
   updatedAt DateTime @updatedAt
 
   @@index([updatedAt])
+}
+
+// Pagos confirmados por el super admin (historial de suscripcion)
+model Payment {
+  id         String    @id @default(cuid())
+  businessId String
+  plan       String?
+  amount     Int
+  // Dias de acceso que dio este pago (0 = sin vencimiento) y hasta cuando quedo pagado
+  days       Int
+  paidUntil  DateTime?
+  createdAt  DateTime  @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([createdAt])
+}
+
+// Codigos OTP de recuperacion de contrasena (se guarda solo el hash)
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

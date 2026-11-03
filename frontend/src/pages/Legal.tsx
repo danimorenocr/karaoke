@@ -9,7 +9,7 @@ const V = ({ k, label }: { k: keyof typeof LEGAL; label: string }) =>
 
 function Layout({ title, intro, children }: { title: string; intro: string; children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#060b14] text-slate-200" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+    <div className="min-h-screen bg-[#05060a] text-slate-200" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
       <header className="border-b border-white/[0.07] px-5 py-5">
         <div className="mx-auto flex max-w-3xl items-center justify-between">
           <Link to="/" aria-label="Inicio"><Brand /></Link>

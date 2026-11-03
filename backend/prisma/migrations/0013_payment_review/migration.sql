@@ -1,0 +1,3 @@
+ALTER TYPE "BusinessStatus" ADD VALUE 'PAYMENT_REVIEW';
+
+ALTER TABLE "Business" ADD COLUMN "paidUntil" TIMESTAMP(3);

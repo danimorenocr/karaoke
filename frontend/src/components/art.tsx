@@ -6,17 +6,17 @@ export function Headphones({ className = '' }: { className?: string }) {
   return (
     <svg viewBox="0 0 320 200" className={className} aria-hidden fill="none">
       <defs>
-        <linearGradient id="hp-body" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#1b2740" /><stop offset="1" stopColor="#070b14" /></linearGradient>
-        <linearGradient id="hp-glow" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#22e3f3" /><stop offset="1" stopColor="#3b82f6" /></linearGradient>
+        <linearGradient id="hp-body" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#1a1c2e" /><stop offset="1" stopColor="#08090e" /></linearGradient>
+        <linearGradient id="hp-glow" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#a9b8ff" /><stop offset="1" stopColor="#c9b8ff" /></linearGradient>
         <filter id="hp-blur"><feGaussianBlur stdDeviation="6" /></filter>
       </defs>
       <path d="M60 150 C40 60 110 10 170 10 C230 10 290 60 270 150" stroke="url(#hp-glow)" strokeWidth="7" strokeLinecap="round" filter="url(#hp-blur)" opacity=".7" />
       <path d="M60 150 C40 60 110 10 170 10 C230 10 290 60 270 150" stroke="url(#hp-body)" strokeWidth="16" strokeLinecap="round" />
       <path d="M72 120 C64 70 112 24 170 24" stroke="url(#hp-glow)" strokeWidth="2.5" strokeLinecap="round" />
-      <rect x="28" y="92" width="62" height="100" rx="30" fill="url(#hp-body)" stroke="#22e3f3" strokeOpacity=".55" strokeWidth="2" />
-      <rect x="40" y="108" width="34" height="68" rx="17" fill="#0a1220" stroke="#22e3f3" strokeOpacity=".35" />
-      <rect x="240" y="92" width="62" height="100" rx="30" fill="url(#hp-body)" stroke="#22e3f3" strokeOpacity=".55" strokeWidth="2" />
-      <rect x="256" y="108" width="34" height="68" rx="17" fill="#0a1220" stroke="#22e3f3" strokeOpacity=".35" />
+      <rect x="28" y="92" width="62" height="100" rx="30" fill="url(#hp-body)" stroke="#a9b8ff" strokeOpacity=".55" strokeWidth="2" />
+      <rect x="40" y="108" width="34" height="68" rx="17" fill="#0a0b12" stroke="#a9b8ff" strokeOpacity=".35" />
+      <rect x="240" y="92" width="62" height="100" rx="30" fill="url(#hp-body)" stroke="#a9b8ff" strokeOpacity=".55" strokeWidth="2" />
+      <rect x="256" y="108" width="34" height="68" rx="17" fill="#0a0b12" stroke="#a9b8ff" strokeOpacity=".35" />
     </svg>
   );
 }

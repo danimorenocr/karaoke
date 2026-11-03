@@ -1,5 +1,5 @@
-import { Body, ConflictException, Controller, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsArray, IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
@@ -23,6 +23,12 @@ class ProviderDto {
 class ExperiencesDto {
   @IsArray() @IsIn([...EXPERIENCE_IDS], { each: true }) ids: string[];
 }
+class PaymentDto {
+  // Dias de acceso a sumar; 0 = sin vencimiento
+  @IsInt() @Min(0) @Max(3650) days: number;
+  // Valor recibido en COP; si no se envia se usa el precio mensual del plan
+  @IsOptional() @IsInt() @Min(0) @Max(100_000_000) amount?: number;
+}
 class StatusDto {
   @IsBoolean() active: boolean;
 }
@@ -38,6 +44,15 @@ class UpdateBusinessDto {
 }
 class TableDto {
   @IsString() @MinLength(1) @MaxLength(40) name: string;
+}
+class BulkTablesDto {
+  // Las mesas se llaman "<prefijo> <numero>", desde `from` y `count` seguidas
+  @IsString() @MinLength(1) @MaxLength(30) prefix: string;
+  @IsInt() @Min(0) @Max(9999) from: number;
+  @IsInt() @Min(1) @Max(100) count: number;
+}
+class DeleteTablesDto {
+  @IsArray() @IsString({ each: true }) @ArrayMaxSize(500) ids: string[];
 }
 class UpdateTableDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) name?: string;
@@ -73,8 +88,36 @@ class AdminService {
     });
   }
 
-  setBusinessStatus(id: string, active: boolean) {
+  async setBusinessStatus(id: string, active: boolean) {
+    // Al reactivar a mano un negocio vencido se quita el vencimiento (si no, se suspenderia de nuevo)
+    if (active) await this.prisma.business.updateMany({ where: { id, paidUntil: { lt: new Date() } }, data: { paidUntil: null } });
     return this.prisma.business.update({ where: { id }, data: { status: active ? 'ACTIVE' : 'SUSPENDED' } });
+  }
+
+  /** Registra un pago: activa el establecimiento y le da `days` dias mas (se suman a lo que le quede). 0 = sin vencimiento. */
+  async registerPayment(id: string, days: number, amount?: number) {
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id }, select: { paidUntil: true, plan: true } });
+    const now = new Date();
+    const from = b.paidUntil && b.paidUntil > now ? b.paidUntil : now;
+    const paidUntil = days === 0 ? null : new Date(from.getTime() + days * 86_400_000);
+    const price = b.plan === 'CUSTOM' ? 49900 : 39900;
+    const [business] = await this.prisma.$transaction([
+      this.prisma.business.update({ where: { id }, data: { status: 'ACTIVE', paidUntil } }),
+      this.prisma.payment.create({ data: { businessId: id, plan: b.plan, amount: amount ?? price, days, paidUntil } }),
+    ]);
+    return business;
+  }
+
+  listPayments() {
+    return this.prisma.payment.findMany({ orderBy: { createdAt: 'desc' }, take: 500, include: { business: { select: { name: true } } } });
+  }
+
+  /** Borra el establecimiento y, en cascada, usuarios, mesas, sesiones, pedidos, eventos y pagos. */
+  async deleteBusiness(id: string) {
+    const b = await this.prisma.business.findUnique({ where: { id }, select: { id: true } });
+    if (!b) throw new NotFoundException('Establecimiento no encontrado');
+    await this.prisma.business.delete({ where: { id } });
+    return { ok: true };
   }
 
   setSearchProvider(id: string, provider: 'YOUTUBE' | 'GOOGLE') {
@@ -110,6 +153,24 @@ class AdminService {
 
   createTable(businessId: string, dto: TableDto) {
     return this.prisma.table.create({ data: { businessId, name: dto.name, qrToken: newToken() } });
+  }
+
+  /** Crea varias mesas de una vez; omite las que ya existen con el mismo nombre. */
+  async createTablesBulk(businessId: string, dto: BulkTablesDto) {
+    const prefix = dto.prefix.trim();
+    const names = Array.from({ length: dto.count }, (_, i) => `${prefix} ${dto.from + i}`.slice(0, 40));
+    const existing = new Set((await this.prisma.table.findMany({ where: { businessId }, select: { name: true } })).map((t) => t.name.toLowerCase()));
+    const fresh = names.filter((n) => !existing.has(n.toLowerCase()));
+    if (existing.size + fresh.length > 500) throw new ConflictException('Un establecimiento puede tener hasta 500 mesas');
+    if (fresh.length) await this.prisma.table.createMany({ data: fresh.map((name) => ({ businessId, name, qrToken: newToken() })) });
+    return { created: fresh.length, skipped: names.length - fresh.length };
+  }
+
+  /** Borra mesas del establecimiento; sus pedidos se borran en cascada y sus QR dejan de funcionar. */
+  async deleteTables(businessId: string, ids: string[]) {
+    const r = await this.prisma.table.deleteMany({ where: { businessId, id: { in: ids } } });
+    this.rt.queueUpdated(businessId);
+    return { deleted: r.count };
   }
 
   private async ownedTable(businessId: string, id: string) {
@@ -178,6 +239,9 @@ class SuperController {
   @Post('businesses') create(@Body() dto: CreateBusinessDto) { return this.s.createBusiness(dto); }
   @Patch('businesses/:id/search-provider') provider(@Param('id') id: string, @Body() b: ProviderDto) { return this.s.setSearchProvider(id, b.provider); }
   @Patch('businesses/:id/experiences') experiences(@Param('id') id: string, @Body() b: ExperiencesDto) { return this.s.setExperiences(id, b.ids); }
+  @Patch('businesses/:id/payment') payment(@Param('id') id: string, @Body() b: PaymentDto) { return this.s.registerPayment(id, b.days, b.amount); }
+  @Get('payments') payments() { return this.s.listPayments(); }
+  @Delete('businesses/:id') remove(@Param('id') id: string) { return this.s.deleteBusiness(id); }
   @Patch('businesses/:id/status') status(@Param('id') id: string, @Body() b: StatusDto) { return this.s.setBusinessStatus(id, b.active); }
 }
 
@@ -189,6 +253,8 @@ class AdminController {
   @Get('business') business(@CurrentUser() u: AuthUser) { return this.s.getBusiness(u.businessId!); }
   @Patch('business') update(@CurrentUser() u: AuthUser, @Body() dto: UpdateBusinessDto) { return this.s.updateBusiness(u.businessId!, dto); }
   @Get('tables') tables(@CurrentUser() u: AuthUser) { return this.s.listTables(u.businessId!); }
+  @Post('tables/delete') removeTables(@CurrentUser() u: AuthUser, @Body() dto: DeleteTablesDto) { return this.s.deleteTables(u.businessId!, dto.ids); }
+  @Post('tables/bulk') addTablesBulk(@CurrentUser() u: AuthUser, @Body() dto: BulkTablesDto) { return this.s.createTablesBulk(u.businessId!, dto); }
   @Post('tables') addTable(@CurrentUser() u: AuthUser, @Body() dto: TableDto) { return this.s.createTable(u.businessId!, dto); }
   @Patch('tables/:id') editTable(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: UpdateTableDto) { return this.s.updateTable(u.businessId!, id, dto); }
   @Post('tables/:id/rotate-qr') rotate(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.s.rotateQr(u.businessId!, id); }

@@ -72,7 +72,7 @@ function TableName({ name, onSave }: { name: string; onSave: (name: string) => P
         className="min-w-0 flex-1 rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-base font-bold outline-none focus:border-white/40"
       />
       <Btn kind="accent" className="!px-2.5 !py-1 text-xs" disabled={saving || !value.trim()}>{saving ? '…' : 'Guardar'}</Btn>
-      <Btn type="button" className="!px-2.5 !py-1 text-xs" onClick={() => { setEditing(false); setValue(name); }}>✕</Btn>
+      <Btn type="button" className="!px-2.5 !py-1 text-xs" onClick={() => { setEditing(false); setValue(name); }}><Icon name="x" className="h-4 w-4" /></Btn>
     </form>
   );
 }
@@ -155,12 +155,17 @@ async function downloadAllQrPdf(tables: any[], bizName: string) {
 }
 
 /** Tarjeta de mesa: toma el aspecto de la experiencia que tiene asignada. */
-function TableCard({ t, onDetails }: { t: any; onDetails: () => void }) {
+function TableCard({ t, onDetails, selecting = false, selected = false }: { t: any; onDetails: () => void; selecting?: boolean; selected?: boolean }) {
   const th = tableTheme(t.experienceId);
   const ink = th.dark ? 'text-white' : 'text-[#1d1a14]';
   const sub = th.dark ? 'text-white/70' : 'text-[#1d1a14]/65';
   return (
-    <article className={`relative overflow-hidden rounded-3xl p-5 shadow-xl transition ${t.active ? '' : 'opacity-60 grayscale'} ${ink}`} style={{ background: th.bg, minHeight: 300 }}>
+    <article onClick={selecting ? onDetails : undefined} className={`relative overflow-hidden rounded-3xl p-5 shadow-xl transition ${selecting ? 'cursor-pointer' : ''} ${t.active ? '' : 'opacity-60 grayscale'} ${ink}`} style={{ background: th.bg, minHeight: 300, outline: selected ? `3px solid ${ACCENT}` : undefined, outlineOffset: -3 }}>
+      {selecting && (
+        <span className="absolute right-4 top-4 z-20 grid h-8 w-8 place-items-center rounded-full border-2 shadow-lg" style={selected ? { background: ACCENT, borderColor: ACCENT, color: '#0b1030' } : { background: 'rgba(0,0,0,.45)', borderColor: 'rgba(255,255,255,.7)' }} aria-hidden>
+          {selected && <Icon name="check" className="h-5 w-5" />}
+        </span>
+      )}
       {th.art}
       <h3 className="relative z-10 text-3xl font-extrabold tracking-tight">{t.name}</h3>
       <p className={`relative z-10 mt-1 text-sm ${sub}`}>Experiencia: {expName(t.experienceId)}</p>
@@ -171,7 +176,7 @@ function TableCard({ t, onDetails }: { t: any; onDetails: () => void }) {
 
       <div className="relative z-10 mt-4 flex items-center justify-between gap-3">
         <span className={`flex items-center gap-2 text-sm ${sub}`}><Sparkle className="h-4 w-4" />Diseño personalizado</span>
-        <button onClick={onDetails} className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition hover:brightness-110 ${th.dark ? 'bg-white/15 text-white' : 'bg-white/70 text-[#1d1a14]'}`}>
+        <button onClick={(e) => { if (selecting) return; e.stopPropagation(); onDetails(); }} className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition hover:brightness-110 ${th.dark ? 'bg-white/15 text-white' : 'bg-white/70 text-[#1d1a14]'}`}>
           Ver detalles <Icon name="arrow" className="h-4 w-4" />
         </button>
       </div>
@@ -179,7 +184,7 @@ function TableCard({ t, onDetails }: { t: any; onDetails: () => void }) {
   );
 }
 
-function TableDetails({ t, allowed, onClose, onPatch, onRotate }: { t: any; allowed: string[]; onClose: () => void; onPatch: (d: any, ok?: string) => Promise<void>; onRotate: () => void }) {
+function TableDetails({ t, allowed, onClose, onPatch, onRotate, onDelete }: { t: any; allowed: string[]; onClose: () => void; onPatch: (d: any, ok?: string) => Promise<void>; onRotate: () => void; onDelete: () => void }) {
   return (
     <Dialog title="Detalles de la mesa" onClose={onClose} wide>
       <div className="grid gap-6 md:grid-cols-[auto_1fr]">
@@ -189,7 +194,7 @@ function TableDetails({ t, allowed, onClose, onPatch, onRotate }: { t: any; allo
             <Btn className="!px-3 !py-1.5 text-xs" onClick={() => downloadQr(t.name, t.qrToken, 'png')}><Icon name="download" className="mr-1 inline h-3.5 w-3.5" />PNG</Btn>
             <Btn className="!px-3 !py-1.5 text-xs" onClick={() => downloadQr(t.name, t.qrToken, 'svg')}><Icon name="download" className="mr-1 inline h-3.5 w-3.5" />SVG</Btn>
           </div>
-          <a className="max-w-[12rem] truncate text-xs hover:underline" style={{ color: ACCENT }} href={tableUrl(t.qrToken)} target="_blank" rel="noreferrer">Abrir página de la mesa ↗</a>
+          <a className="max-w-[12rem] truncate text-xs hover:underline" style={{ color: ACCENT }} href={tableUrl(t.qrToken)} target="_blank" rel="noreferrer"><span className="inline-flex items-center gap-1">Abrir página de la mesa <Icon name="external" className="h-3 w-3" /></span></a>
         </div>
 
         <div className="min-w-0 space-y-5">
@@ -225,6 +230,7 @@ function TableDetails({ t, allowed, onClose, onPatch, onRotate }: { t: any; allo
           <div className="flex flex-wrap gap-2 border-t border-white/10 pt-4">
             <Btn onClick={() => onPatch({ active: !t.active })}>{t.active ? 'Desactivar mesa' : 'Activar mesa'}</Btn>
             <Btn kind="danger" onClick={onRotate}>Revocar y regenerar QR</Btn>
+            <Btn kind="danger" onClick={onDelete}><span className="inline-flex items-center gap-2"><Icon name="trash" className="h-4 w-4" />Eliminar mesa</span></Btn>
           </div>
         </div>
       </div>
@@ -232,17 +238,24 @@ function TableDetails({ t, allowed, onClose, onPatch, onRotate }: { t: any; allo
   );
 }
 
-function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
+function TablesView({ tables, allowed, bizName, onCreate, onCreateBulk, onDelete, onPatch, onRotate }: {
   tables: any[];
   allowed: string[];
   bizName: string;
+  onCreateBulk: (d: { prefix: string; from: number; count: number }) => Promise<void>;
   onCreate: (name: string) => Promise<void>;
+  onDelete: (ids: string[]) => Promise<void>;
   onPatch: (id: string, d: any, ok?: string) => Promise<void>;
   onRotate: (t: any) => void;
 }) {
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [bulk, setBulk] = useState(false);
+  const [sel, setSel] = useState<Set<string> | null>(null); // modo seleccion (null = apagado)
+  const [confirmDel, setConfirmDel] = useState<string[] | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [bulkF, setBulkF] = useState({ prefix: 'Mesa', from: 1, count: 10 });
   const [openId, setOpenId] = useState<string | null>(null);
 
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -266,10 +279,28 @@ function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
         >
           <Icon name="download" />{pdfBusy ? 'Generando…' : 'Descargar QR en PDF'}
         </button>
-        <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-2xl px-6 py-3.5 font-bold text-[#04202a] shadow-lg transition hover:brightness-110 active:scale-[.98]" style={{ background: ACCENT, boxShadow: `0 8px 30px ${ACCENT}44` }}>
+        <button
+          onClick={() => setSel(sel ? null : new Set())}
+          disabled={tables.length === 0}
+          aria-pressed={!!sel}
+          className="flex items-center gap-2 rounded-2xl border border-white/10 px-5 py-3.5 font-semibold text-slate-100 transition hover:bg-white/10 disabled:opacity-40"
+          style={sel ? { background: ACCENT + '22', borderColor: ACCENT + '88' } : { background: 'rgba(255,255,255,.04)' }}
+        >
+          <Icon name={sel ? 'x' : 'check'} />{sel ? 'Cancelar selección' : 'Seleccionar'}
+        </button>
+        <button onClick={() => setCreating(true)} className="flex items-center gap-2 rounded-2xl px-6 py-3.5 font-bold text-[#0b1030] shadow-lg transition hover:brightness-110 active:scale-[.98]" style={{ background: ACCENT, boxShadow: `0 8px 30px ${ACCENT}44` }}>
           <Icon name="plus" />Nueva Mesa
         </button>
       </div>
+
+      {sel && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm">
+          <b>{sel.size}</b> seleccionada{sel.size === 1 ? '' : 's'}
+          <button className="font-semibold hover:underline" style={{ color: ACCENT }} onClick={() => setSel(new Set(shown.map((t) => t.id)))}>Seleccionar todas{q.trim() ? ' las filtradas' : ''}</button>
+          {sel.size > 0 && <button className="text-slate-400 hover:text-slate-200" onClick={() => setSel(new Set())}>Quitar selección</button>}
+          <Btn kind="danger" className="ml-auto" disabled={sel.size === 0} onClick={() => setConfirmDel([...sel])}><span className="inline-flex items-center gap-2"><Icon name="trash" className="h-4 w-4" />Eliminar ({sel.size})</span></Btn>
+        </div>
+      )}
 
       {tables.length === 0 ? (
         <Card><Empty>Aún no hay mesas. Crea la primera para generar su código QR.</Empty></Card>
@@ -281,7 +312,14 @@ function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
             <TableCard
               key={t.id}
               t={t}
-              onDetails={() => setOpenId(t.id)}
+              selecting={!!sel}
+              selected={!!sel?.has(t.id)}
+              onDetails={() => {
+                if (!sel) return setOpenId(t.id);
+                const n = new Set(sel);
+                if (n.has(t.id)) n.delete(t.id); else n.add(t.id);
+                setSel(n);
+              }}
             />
           ))}
         </div>
@@ -292,11 +330,30 @@ function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
       </div>
 
       {creating && (
-        <Dialog title="Nueva mesa" onClose={() => setCreating(false)}>
-          <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreate(name); setName(''); setCreating(false); }}>
-            <Field label="Nombre" placeholder="Ej. Mesa 5" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required autoFocus />
-            <Btn kind="accent" className="py-3">Crear mesa</Btn>
-          </form>
+        <Dialog title={bulk ? 'Crear varias mesas' : 'Nueva mesa'} onClose={() => setCreating(false)}>
+          <div className="mb-4 grid grid-cols-2 gap-1.5 rounded-xl bg-white/[0.05] p-1">
+            {([[false, 'Una mesa'], [true, 'Varias a la vez']] as const).map(([v, label]) => (
+              <button key={label} type="button" onClick={() => setBulk(v)} aria-pressed={bulk === v} className="rounded-lg py-2 text-sm font-semibold transition" style={bulk === v ? { background: ACCENT, color: '#0b1030' } : { color: '#cbd5e1' }}>{label}</button>
+            ))}
+          </div>
+          {!bulk ? (
+            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreate(name); setName(''); setCreating(false); }}>
+              <Field label="Nombre" placeholder="Ej. Mesa 5" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required autoFocus />
+              <Btn kind="accent" className="py-3">Crear mesa</Btn>
+            </form>
+          ) : (
+            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreateBulk(bulkF); setCreating(false); }}>
+              <Field label="Nombre base" placeholder="Mesa" value={bulkF.prefix} onChange={(e) => setBulkF({ ...bulkF, prefix: e.target.value })} maxLength={30} required autoFocus />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Empezar en" type="number" min={0} max={9999} value={bulkF.from} onChange={(e) => setBulkF({ ...bulkF, from: Math.max(0, Number(e.target.value) || 0) })} required />
+                <Field label="Cantidad (máx. 100)" type="number" min={1} max={100} value={bulkF.count} onChange={(e) => setBulkF({ ...bulkF, count: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })} required />
+              </div>
+              <p className="rounded-xl bg-white/[0.05] px-4 py-3 text-sm text-slate-300">
+                Se crearán <b>{bulkF.count}</b> mesas: <b>{bulkF.prefix.trim() || 'Mesa'} {bulkF.from}</b>{bulkF.count > 1 && <> … <b>{bulkF.prefix.trim() || 'Mesa'} {bulkF.from + bulkF.count - 1}</b></>}. Las que ya existan con ese nombre se omiten.
+              </p>
+              <Btn kind="accent" className="py-3">Crear {bulkF.count} mesas</Btn>
+            </form>
+          )}
         </Dialog>
       )}
       {open && (
@@ -306,7 +363,19 @@ function TablesView({ tables, allowed, bizName, onCreate, onPatch, onRotate }: {
           onClose={() => setOpenId(null)}
           onPatch={(d, ok) => onPatch(open.id, d, ok)}
           onRotate={() => onRotate(open)}
+          onDelete={() => setConfirmDel([open.id])}
         />
+      )}
+      {confirmDel && (
+        <Dialog title={confirmDel.length === 1 ? 'Eliminar mesa' : `Eliminar ${confirmDel.length} mesas`} onClose={() => !delBusy && setConfirmDel(null)}>
+          <p className="text-sm text-slate-300">
+            {confirmDel.length === 1 ? <>Se eliminará <b>{tables.find((t) => t.id === confirmDel[0])?.name}</b></> : <>Se eliminarán <b>{confirmDel.length} mesas</b></>} junto con sus canciones pedidas. Sus códigos QR impresos dejarán de funcionar. No se puede deshacer.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Btn onClick={() => setConfirmDel(null)} disabled={delBusy}>Cancelar</Btn>
+            <Btn kind="danger" disabled={delBusy} onClick={async () => { setDelBusy(true); try { await onDelete(confirmDel); setConfirmDel(null); setOpenId(null); setSel(sel ? new Set() : null); } finally { setDelBusy(false); } }}>{delBusy ? 'Eliminando…' : 'Eliminar'}</Btn>
+          </div>
+        </Dialog>
       )}
     </div>
   );
@@ -328,7 +397,7 @@ export default function Admin() {
   }, []);
   useEffect(() => { load().catch((e) => toast(e.message, true)); }, [load]);
 
-  if (!biz) return <div className="grid min-h-screen place-items-center bg-[#060b14] text-slate-500">Cargando...</div>;
+  if (!biz) return <div className="grid min-h-screen place-items-center bg-[#05060a] text-slate-500">Cargando...</div>;
   const reload = (fn: () => Promise<unknown>, ok?: string) => run(async () => { await fn(); if (ok) toast(ok); await load(); });
   const [title, subtitle] = HERO[tab];
 
@@ -351,6 +420,8 @@ export default function Admin() {
           allowed={biz.allowedExperiences ?? []}
           bizName={biz.name}
           onCreate={(name) => reload(() => api('POST', '/admin/tables', { name }), 'Mesa creada')}
+          onDelete={(ids) => reload(async () => { const r = await api('POST', '/admin/tables/delete', { ids }); toast(`${r.deleted} mesa${r.deleted === 1 ? '' : 's'} eliminada${r.deleted === 1 ? '' : 's'}`); }, '')}
+          onCreateBulk={(d) => reload(async () => { const r = await api('POST', '/admin/tables/bulk', d); toast(`${r.created} mesa${r.created === 1 ? '' : 's'} creada${r.created === 1 ? '' : 's'}${r.skipped ? ` · ${r.skipped} ya existían` : ''}`); }, '')}
           onPatch={(id, d, ok) => reload(() => api('PATCH', `/admin/tables/${id}`, d), ok)}
           onRotate={(t) => confirm(`El QR impreso de ${t.name} dejará de funcionar. ¿Generar uno nuevo?`) && reload(() => api('POST', `/admin/tables/${t.id}/rotate-qr`), 'QR regenerado')}
         />
@@ -472,7 +543,7 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
           <div className="grid gap-1.5 text-sm">
             <span className="font-medium text-slate-300">¿Qué pueden buscar los clientes?</span>
             <div className="grid grid-cols-2 gap-2">
-              {([['KARAOKE', '🎤 Solo karaoke', 'Busca versiones karaoke'], ['ANY', '🎵 Cualquier música', 'Cualquier video de música']] as const).map(([k, title, hint]) => (
+              {([['KARAOKE', 'Solo karaoke', 'Busca versiones karaoke'], ['ANY', 'Cualquier música', 'Cualquier video de música']] as const).map(([k, title, hint]) => (
                 <button
                   key={k}
                   type="button"
@@ -500,7 +571,7 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
             {banner ? <img src={banner} alt="Banner de la TV" className="h-full w-full object-contain" /> : <span className="px-4 text-center text-xs text-slate-500">Sin imagen: la TV muestra el nombre del bar</span>}
           </div>
           <div className="grid gap-3 text-sm">
-            <p className="text-slate-300">Esta imagen aparece en la TV entre una canción y otra, mientras carga el siguiente video. Usa una imagen horizontal (16:9, por ejemplo 1920×1080); PNG, JPG o WebP.</p>
+            <p className="text-slate-300">Esta imagen aparece en la TV entre una canción y otra, mientras carga el siguiente video. Usa una imagen horizontal (16:9, por ejemplo 1920 x 1080); PNG, JPG o WebP.</p>
             <div className="flex flex-wrap gap-2">
               <label className="cursor-pointer rounded-xl bg-white/10 px-4 py-2 font-semibold hover:bg-white/15">
                 {banner ? 'Cambiar imagen' : 'Subir imagen'}

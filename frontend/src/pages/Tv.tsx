@@ -239,13 +239,13 @@ export default function Tv() {
   return (
     <div className="fixed inset-0 bg-black text-white">
       {replaced && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-zinc-950 p-8 text-center">
-          <div className="text-5xl">📺</div>
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
+          <div className="grid h-20 w-20 place-items-center rounded-3xl" style={{ background: '#a9b8ff22', color: '#a9b8ff' }}><svg viewBox="0 0 24 24" className="h-10 w-10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18v12H3zM8 21h8" /></svg></div>
           <div className="text-3xl font-bold">Otra pantalla tomó el control</div>
           <p className="max-w-lg text-lg text-zinc-400">
             Se abrió el karaoke en otra pantalla, así que esta se detuvo para no duplicar el sonido. Si prefieres usar esta, pulsa el botón.
           </p>
-          <button onClick={() => location.reload()} className="rounded-2xl bg-pink-600 px-10 py-4 text-2xl font-bold hover:bg-pink-500">
+          <button onClick={() => location.reload()} className="rounded-2xl bg-[#a9b8ff] px-10 py-4 text-2xl font-extrabold text-[#0b1030] hover:brightness-110">
             Usar esta pantalla
           </button>
         </div>
@@ -263,21 +263,41 @@ export default function Tv() {
         )}
 
         {(!armed || idle || blocked) && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-zinc-950 p-8 text-center">
-            <div className="text-6xl font-extrabold md:text-8xl">{state?.business?.name ?? 'Karaoke'}</div>
-            {err && <div className="text-xl text-red-400">{err}</div>}
+          <div className="tv-idle absolute inset-0 z-10 flex flex-col items-center justify-center gap-7 overflow-hidden bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
+            <style>{`
+              @keyframes tv-in{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+              @keyframes tv-glow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
+              @keyframes tv-eq{0%,100%{height:12%}50%{height:100%}}
+              @keyframes tv-pulse{0%,100%{box-shadow:0 0 0 0 #a9b8ff66}50%{box-shadow:0 0 0 18px transparent}}
+              .tv-idle>*{animation:tv-in .9s both cubic-bezier(.2,.7,.2,1)}
+              .tv-idle>*:nth-child(3){animation-delay:.12s}.tv-idle>*:nth-child(4){animation-delay:.24s}.tv-idle>*:nth-child(5){animation-delay:.36s}.tv-idle>*:nth-child(6){animation-delay:.48s}
+              .tv-idle>.tv-glow{animation:tv-glow 6s ease-in-out infinite}
+              .tv-btn{animation:tv-pulse 2.4s infinite;transition:transform .2s,filter .2s}.tv-btn:hover{transform:scale(1.04);filter:brightness(1.08)}.tv-btn:active{transform:scale(.97)}
+              .tv-eq i{display:block;width:.6rem;border-radius:9px;background:#a9b8ff;animation:tv-eq 1.2s ease-in-out infinite}
+              @media (prefers-reduced-motion:reduce){.tv-idle *{animation:none!important}}
+            `}</style>
+            <div className="tv-glow pointer-events-none absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#a9b8ff33,transparent 65%)' }} />
+            <img src="/logo.png" alt="TONO" className="relative h-28 w-auto md:h-40" draggable={false} />
+            <div className="relative text-6xl font-black tracking-tight md:text-8xl" style={{ color: '#f5ecdc' }}>{state?.business?.name ?? 'Karaoke'}</div>
+            {err && <div className="relative rounded-2xl border border-red-400/30 bg-red-500/15 px-6 py-3 text-xl text-red-200">{err}</div>}
             {noSession ? (
-              <div className="text-3xl text-zinc-300">Esperando que el DJ inicie la sesion...</div>
+              <div className="relative flex items-center gap-4 text-2xl text-slate-300 md:text-3xl">
+                <span className="tv-eq flex h-8 items-end gap-1" aria-hidden>{[0, 0.2, 0.4, 0.1, 0.3].map((d) => <i key={d} style={{ animationDelay: `${d}s` }} />)}</span>
+                Esperando que el DJ inicie la sesión…
+              </div>
             ) : !armed ? (
-              <button onClick={start} className="rounded-2xl bg-pink-600 px-12 py-6 text-4xl font-bold hover:bg-pink-500">
-                Iniciar karaoke
+              <button onClick={start} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
+                Iniciar transmisión
               </button>
             ) : blocked ? (
-              <button onClick={() => { playerRef.current?.playVideo(); setBlocked(false); }} className="rounded-2xl bg-pink-600 px-12 py-6 text-4xl font-bold">
+              <button onClick={() => { playerRef.current?.playVideo(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
                 Pulsa para continuar
               </button>
             ) : (
-              <div className="text-3xl text-zinc-300">Escanea el QR de tu mesa y pide tu cancion</div>
+              <div className="relative flex items-center gap-4 text-2xl text-slate-300 md:text-3xl">
+                <span className="tv-eq flex h-8 items-end gap-1" aria-hidden>{[0, 0.2, 0.4, 0.1, 0.3].map((d) => <i key={d} style={{ animationDelay: `${d}s` }} />)}</span>
+                Escanea el QR de tu mesa y pide tu canción
+              </div>
             )}
           </div>
         )}
@@ -288,7 +308,7 @@ export default function Tv() {
         <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-6 bg-gradient-to-b from-black/80 to-transparent px-8 pb-10 pt-4">
           <div className="min-w-0">
             <div className="truncate text-2xl font-bold drop-shadow">{cur.title}</div>
-            <div className="text-lg text-pink-400">{cur.tableName}</div>
+            <div className="text-lg text-[#a9b8ff]">{cur.tableName}</div>
           </div>
           <div className="min-w-0 text-right">
             <div className="text-xs uppercase text-zinc-400">Siguiente</div>

@@ -1,0 +1,4 @@
+ALTER TYPE "BusinessStatus" ADD VALUE 'PENDING_PAYMENT';
+
+ALTER TABLE "Business" ADD COLUMN "phone" TEXT;
+ALTER TABLE "Business" ADD COLUMN "plan" TEXT;

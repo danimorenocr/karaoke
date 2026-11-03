@@ -2,7 +2,7 @@ import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
 import DjSearch from '../components/DjSearch';
-import { ACCENT, Btn, NavItem, Shell } from '../components/kit';
+import { ACCENT, Btn, Icon, NavItem, Shell } from '../components/kit';
 const STATUS_LABEL: Record<string, [string, string]> = {
   COMPLETED: ['Completada', 'text-slate-400'],
   REJECTED: ['Rechazada', 'text-red-400'],
@@ -103,7 +103,7 @@ export default function Dj() {
     if (!tvDown) { document.title = 'TONO'; return; }
     beep();
     let on = true;
-    const t = setInterval(() => { document.title = on ? '⚠️ TV DESCONECTADA' : 'TONO'; on = !on; }, 1000);
+    const t = setInterval(() => { document.title = on ? 'TV DESCONECTADA' : 'TONO'; on = !on; }, 1000);
     return () => { clearInterval(t); document.title = 'TONO'; };
   }, [tvDown]);
 
@@ -113,7 +113,7 @@ export default function Dj() {
     act('PATCH', '/dj/playback/paused', { value });
   };
 
-  if (!s) return <div className="grid min-h-screen place-items-center bg-[#060b14] text-slate-500">Cargando...</div>;
+  if (!s) return <div className="grid min-h-screen place-items-center bg-[#05060a] text-slate-500">Cargando...</div>;
   const session = s.session;
   const [title, subtitle] = HERO[tab];
   const links: [string, string, 'tv' | 'home'][] = [['/tv', 'Pantalla TV', 'tv']];
@@ -196,7 +196,7 @@ export default function Dj() {
 
       {tvDown && (
         <div className="mb-6 rounded-2xl border border-red-400/30 bg-red-500/20 px-5 py-3 text-center text-sm font-semibold text-red-100" role="alert">
-          ⚠️ La pantalla de TV se desconectó. Revisa el internet o el navegador de la TV; al volver se reconecta sola
+          <Icon name="warn" className="mr-2 inline h-5 w-5 align-[-.2em]" />La pantalla de TV se desconectó. Revisa el internet o el navegador de la TV; al volver se reconecta sola
           (si recargaron la página, hay que pulsar “Iniciar karaoke” otra vez).
         </div>
       )}
@@ -208,7 +208,7 @@ export default function Dj() {
 
       {!session ? (
         <div className="mx-auto max-w-md py-16 text-center">
-          <div className="mb-3 text-5xl">🎤</div>
+          <div className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-2xl" style={{ background: ACCENT + '22', color: ACCENT }}><Icon name="mic" className="h-8 w-8" /></div>
           <h2 className="text-2xl font-bold">La sesión está cerrada</h2>
           <p className="mt-2 text-slate-400">Inicia la sesión para que los clientes puedan pedir canciones. Después abre la pantalla TV del bar y pulsa “Iniciar karaoke”.</p>
           <Btn kind="accent" className="mt-6 px-6 py-3 text-base" onClick={() => act('POST', '/dj/session/start')}>Iniciar sesión de karaoke</Btn>
@@ -234,9 +234,9 @@ export default function Dj() {
                         {s.queue[0] && <div className="mt-2 truncate text-xs text-slate-400">Sigue: {s.queue[0].title} · {s.queue[0].tableName}</div>}
                       </div>
                       <div className="flex gap-2">
-                        <Btn onClick={togglePause}>{session.paused ? '▶ Reanudar' : '⏸ Pausar'}</Btn>
-                        <Btn onClick={() => act('POST', '/dj/playback/reload')}>↻ Recargar</Btn>
-                        <Btn kind="danger" onClick={() => act('POST', '/dj/playback/skip')}>⏭ Saltar</Btn>
+                        <Btn onClick={togglePause}><span className="inline-flex items-center gap-2"><Icon name={session.paused ? 'play' : 'pause'} className="h-4 w-4" />{session.paused ? 'Reanudar' : 'Pausar'}</span></Btn>
+                        <Btn onClick={() => act('POST', '/dj/playback/reload')}><span className="inline-flex items-center gap-2"><Icon name="reload" className="h-4 w-4" />Recargar</span></Btn>
+                        <Btn kind="danger" onClick={() => act('POST', '/dj/playback/skip')}><span className="inline-flex items-center gap-2"><Icon name="skip" className="h-4 w-4" />Saltar</span></Btn>
                       </div>
                     </div>
                   ) : (
@@ -288,9 +288,9 @@ export default function Dj() {
                           <div className="text-xs text-slate-400">{r.tableName}</div>
                         </div>
                         <div className="flex gap-1">
-                          <button title="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25">↑</button>
-                          <button title="Bajar" disabled={i === s.queue.length - 1} onClick={() => move(i, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25">↓</button>
-                          <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25">✕</button>
+                          <button title="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="up" className="h-4 w-4" /></button>
+                          <button title="Bajar" disabled={i === s.queue.length - 1} onClick={() => move(i, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="downArrow" className="h-4 w-4" /></button>
+                          <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
                         </div>
                       </div>
                     ))}
