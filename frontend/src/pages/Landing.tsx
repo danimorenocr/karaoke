@@ -200,7 +200,7 @@ export default function Landing() {
           <Rv><Eyebrow>Demo</Eyebrow><H2>Mírala funcionando en 47 segundos.</H2></Rv>
           <Rv d={0.15}>
             <div className="ld-lift mt-10 overflow-hidden rounded-2xl border" style={{ borderColor: `${C.ac}55`, background: '#0b0b12', boxShadow: `0 30px 80px -30px ${C.ac}55` }}>
-              <video src="/demo-tono.mp4" poster="/demo-tono-poster.jpg" controls playsInline preload="metadata" className="block h-auto w-full" />
+              <video src="/2-demo-tono-v3.mp4" poster="/demo-tono-poster.jpg" controls playsInline preload="metadata" className="block h-auto w-full" />
             </div>
             <p className="mt-4 text-center text-[13px]" style={{ color: C.mute }}>Grabada del producto real, con narración en español.</p>
           </Rv>
