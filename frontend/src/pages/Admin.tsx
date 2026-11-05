@@ -130,26 +130,42 @@ async function downloadQr(name: string, token: string, kind: 'png' | 'svg') {
   a.click();
 }
 
-/** PDF con todos los QR (4 por hoja A4): cada uno apunta al enlace de su mesa y lleva el nombre de la mesa. */
+/** PDF con todos los QR (9 por hoja A4, cuadrícula 3×3): cada uno apunta al enlace de su mesa y lleva el nombre de la mesa. */
 async function downloadAllQrPdf(tables: any[], bizName: string) {
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const W = 210, H = 297, cw = W / 2, ch = H / 2;
+  const W = 210, H = 297, M = 8, G = 4; // márgenes y separación entre tarjetas
+  const cw = (W - 2 * M - 2 * G) / 3, ch = (H - 2 * M - 2 * G) / 3;
+  const NAVY: [number, number, number] = [18, 14, 48];
+  const PINK: [number, number, number] = [236, 72, 153];
+  const GOLD: [number, number, number] = [250, 204, 21];
   for (let i = 0; i < tables.length; i++) {
     const t = tables[i];
-    const slot = i % 4;
+    const slot = i % 9;
     if (i > 0 && slot === 0) doc.addPage();
-    const x = (slot % 2) * cw, y = Math.floor(slot / 2) * ch;
+    const x = M + (slot % 3) * (cw + G), y = M + Math.floor(slot / 3) * (ch + G);
+    const cx = x + cw / 2;
     const png = await qrWithCode(t.qrToken, 900);
-    doc.setDrawColor(200).setLineDashPattern([2, 2], 0).rect(x + 4, y + 4, cw - 8, ch - 8).setLineDashPattern([], 0);
-    doc.setTextColor(20).setFont('helvetica', 'bold').setFontSize(26);
-    doc.text(String(t.name), x + cw / 2, y + 26, { align: 'center', maxWidth: cw - 20 });
-    doc.addImage(png, 'PNG', x + (cw - 78) / 2, y + 36, 78, 78);
-    doc.setFont('helvetica', 'normal').setFontSize(12).setTextColor(70);
-    doc.text('Escanea el código y pide tu canción', x + cw / 2, y + 124, { align: 'center' });
-    doc.setFontSize(9).setTextColor(130);
-    doc.text(bizName, x + cw / 2, y + 133, { align: 'center', maxWidth: cw - 20 });
-    if (!t.active) doc.text('(mesa inactiva)', x + cw / 2, y + 139, { align: 'center' });
+    // tarjeta: fondo oscuro con borde de color
+    doc.setFillColor(...NAVY).setDrawColor(...PINK).setLineWidth(0.8).roundedRect(x, y, cw, ch, 4, 4, 'FD');
+    // cabecera con el nombre de la mesa
+    doc.setFillColor(...PINK).roundedRect(x, y, cw, 16, 4, 4, 'F').rect(x, y + 8, cw, 8, 'F');
+    doc.setFillColor(...GOLD).rect(x, y + 16, cw, 1.2, 'F');
+    doc.setTextColor(255).setFont('helvetica', 'bold').setFontSize(String(t.name).length > 12 ? 13 : 17);
+    doc.text(String(t.name).toUpperCase(), cx, y + 10.5, { align: 'center', maxWidth: cw - 8 });
+    // QR sobre panel blanco
+    const qs = cw - 14, qx = x + 7, qy = y + 22;
+    doc.setFillColor(255, 255, 255).roundedRect(qx - 2, qy - 2, qs + 4, qs + 4, 3, 3, 'F');
+    doc.addImage(png, 'PNG', qx, qy, qs, qs);
+    // textos inferiores
+    const ty = qy + qs + 9;
+    doc.setTextColor(...GOLD).setFont('helvetica', 'bold').setFontSize(11);
+    doc.text('ESCANEA Y CANTA', cx, ty, { align: 'center' });
+    doc.setTextColor(225).setFont('helvetica', 'normal').setFontSize(8);
+    doc.text('Pide tu canción desde tu celular', cx, ty + 5, { align: 'center', maxWidth: cw - 8 });
+    doc.setTextColor(150, 145, 190).setFontSize(7);
+    doc.text(bizName, cx, y + ch - 4, { align: 'center', maxWidth: cw - 8 });
+    if (!t.active) doc.setTextColor(...GOLD).text('(mesa inactiva)', cx, y + ch - 8, { align: 'center' });
   }
   doc.save(`qr-mesas-${bizName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'bar'}.pdf`);
 }
