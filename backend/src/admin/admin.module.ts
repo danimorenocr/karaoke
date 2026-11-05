@@ -64,6 +64,9 @@ class CreateStaffDto {
   @IsEmail() email: string;
   @IsString() @MinLength(8) password: string;
 }
+class UpdateEmailDto {
+  @IsEmail() email: string;
+}
 
 @Injectable()
 class AdminService {
@@ -134,6 +137,26 @@ class AdminService {
     await this.prisma.table.updateMany({ where: { businessId: id, experienceId: { notIn: allowed } }, data: { experienceId: 'classic' } });
     this.rt.queueUpdated(id);
     return b;
+  }
+
+  listUsers(businessId: string) {
+    return this.prisma.user.findMany({
+      where: { businessId },
+      select: { id: true, name: true, email: true, role: true, active: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Cambia el correo de acceso de una cuenta. Contrasena, establecimiento, mesas y QR quedan igual; la sesion sigue activa. */
+  async updateUserEmail(id: string, email: string) {
+    const normalized = email.toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Cuenta no encontrada');
+    if (normalized !== user.email && (await this.prisma.user.findUnique({ where: { email: normalized } }))) {
+      throw new ConflictException('Ese correo ya esta registrado');
+    }
+    const u = await this.prisma.user.update({ where: { id }, data: { email: normalized } });
+    return { id: u.id, name: u.name, email: u.email, role: u.role, active: u.active };
   }
 
   // Toda consulta de abajo filtra por businessId (viene del JWT, nunca del cliente).
@@ -236,6 +259,8 @@ class AdminService {
 class SuperController {
   constructor(private s: AdminService) {}
   @Get('businesses') list() { return this.s.listBusinesses(); }
+  @Get('businesses/:id/users') users(@Param('id') id: string) { return this.s.listUsers(id); }
+  @Patch('users/:id/email') email(@Param('id') id: string, @Body() b: UpdateEmailDto) { return this.s.updateUserEmail(id, b.email); }
   @Post('businesses') create(@Body() dto: CreateBusinessDto) { return this.s.createBusiness(dto); }
   @Patch('businesses/:id/search-provider') provider(@Param('id') id: string, @Body() b: ProviderDto) { return this.s.setSearchProvider(id, b.provider); }
   @Patch('businesses/:id/experiences') experiences(@Param('id') id: string, @Body() b: ExperiencesDto) { return this.s.setExperiences(id, b.ids); }
