@@ -108,6 +108,44 @@ function Payments() {
   );
 }
 
+/** Cuentas de acceso de un establecimiento: permite cambiar el correo de entrada sin tocar contrasena ni QR. */
+function AccountsDialog({ b, onClose, run, toast }: { b: any; onClose: () => void; run: (f: () => Promise<void>) => void; toast: (m: string, bad?: boolean) => void }) {
+  const [users, setUsers] = useState<any[] | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api('GET', `/super/businesses/${b.id}/users`).then((us) => { setUsers(us); setDrafts(Object.fromEntries(us.map((u: any) => [u.id, u.email]))); }).catch((e) => setErr(e.message)), [b.id]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <Dialog title={`Cuentas de ${b.name}`} onClose={onClose}>
+      <p className="mb-4 text-sm text-slate-400">Cambia el correo con el que entra cada cuenta. La contraseña, las mesas y los códigos QR quedan exactamente igual.</p>
+      {err && <Empty>{err}</Empty>}
+      {!users && !err && <Empty>Cargando...</Empty>}
+      <div className="grid gap-3">
+        {(users ?? []).map((u) => {
+          const email = (drafts[u.id] ?? '').trim();
+          const dirty = email.toLowerCase() !== u.email;
+          return (
+            <div key={u.id} className="rounded-xl border border-white/10 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm">
+                <span className="font-semibold">{u.name}</span>
+                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-slate-400">{u.role === 'ADMIN' ? 'Administrador' : u.role === 'DJ' ? 'DJ' : u.role}</span>
+                {!u.active && <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[11px] text-red-300">inactiva</span>}
+              </div>
+              <div className="flex gap-2">
+                <input type="email" value={drafts[u.id] ?? ''} onChange={(e) => setDrafts({ ...drafts, [u.id]: e.target.value })} aria-label={`Correo de ${u.name}`} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/30" />
+                <Btn kind="accent" disabled={!dirty} onClick={() =>
+                  confirm(`¿Cambiar el correo de ${u.name}?\n\nEntrará con ${email} y la misma contraseña de siempre.`) &&
+                  run(async () => { await api('PATCH', `/super/users/${u.id}/email`, { email }); toast(`Correo de ${u.name} actualizado`); load(); })
+                }>Guardar</Btn>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Dialog>
+  );
+}
+
 export default function SuperAdmin() {
   const [tab, setTab] = useState<Tab>('overview');
   const [list, setList] = useState<any[] | null>(null);
@@ -117,6 +155,7 @@ export default function SuperAdmin() {
   const [creating, setCreating] = useState(false);
   const [del, setDel] = useState<{ b: any; text: string } | null>(null);
   const [designs, setDesigns] = useState<{ b: any; sel: string[] } | null>(null);
+  const [accounts, setAccounts] = useState<any | null>(null);
   const [f, setF] = useState(EMPTY);
   const { toast, node } = useToast();
   const run = useAction(toast);
@@ -237,6 +276,7 @@ export default function SuperAdmin() {
                       </div>
                       <p className="mt-1.5 text-[11px] text-slate-500">Suma los días a lo que le quede. 0 = sin vencimiento. Al vencer se suspende solo.</p>
                     </div>
+                    <Btn className="mt-2 w-full" onClick={() => setAccounts(b)}><Icon name="users" className="mr-1 inline h-4 w-4" />Cuentas y correos</Btn>
                     {!pending && <Btn
                       kind={on ? 'danger' : 'ok'}
                       className="mt-2 w-full"
@@ -271,6 +311,7 @@ export default function SuperAdmin() {
           </form>
         </Dialog>
       )}
+      {accounts && <AccountsDialog b={accounts} onClose={() => setAccounts(null)} run={run} toast={toast} />}
       {del && (
         <Dialog title="Eliminar establecimiento" onClose={() => setDel(null)}>
           <p className="text-sm text-slate-300">Se borrará <b>{del.b.name}</b> y <b>toda su información</b>: usuarios, mesas, QR, sesiones, canciones pedidas, estadísticas y pagos. No se puede deshacer.</p>
