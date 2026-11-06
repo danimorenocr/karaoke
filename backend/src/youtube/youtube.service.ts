@@ -86,8 +86,10 @@ export class YoutubeService implements MusicProvider, OnModuleInit {
   }
 
   /** Quita los videos bloqueados y marca los de canales de sello (tambien en resultados guardados antes). */
-  private finalize(data: SongSearchResult[]): SongSearchResult[] {
-    return data.filter((v) => !this.blocked.has(v.videoId)).map((v) => ({ ...v, risky: isRisky(v) }));
+  private finalize(data: SongSearchResult[], mode: 'KARAOKE' | 'ANY' = 'ANY'): SongSearchResult[] {
+    // En modo karaoke solo quedan los videos que dicen serlo (titulo o canal); YouTube mezcla canciones normales
+    const list = mode === 'KARAOKE' ? data.filter((v) => KARAOKE_RE.test(`${v.title} ${v.channelTitle}`)) : data;
+    return list.filter((v) => !this.blocked.has(v.videoId)).map((v) => ({ ...v, risky: isRisky(v) }));
   }
   private cache = new Map<string, { at: number; data: SongSearchResult[] }>();
   private quotaBlockedUntil = 0;
@@ -123,13 +125,13 @@ export class YoutubeService implements MusicProvider, OnModuleInit {
       throw new ServiceUnavailableException('Este establecimiento busca canciones con Google');
     }
     const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at < TTL_MS) return this.finalize(hit.data);
+    if (hit && Date.now() - hit.at < TTL_MS) return this.finalize(hit.data, id ? 'ANY' : mode);
 
     if (id) {
       if (this.blocked.has(id)) throw new BadRequestException('Este video no se puede reproducir en la TV (bloqueado por derechos de autor)');
       const data = await this.byId(id);
       this.remember(key, data);
-      return this.finalize(data);
+      return this.finalize(data); // un link pegado se respeta tal cual
     }
 
     // 1) Cache en la base de datos: no gasta cuota y sobrevive a reinicios y despliegues
@@ -138,7 +140,7 @@ export class YoutubeService implements MusicProvider, OnModuleInit {
       this.prisma.searchCache.update({ where: { key }, data: { hits: { increment: 1 } } }).catch(() => {});
       const data = row.results as unknown as SongSearchResult[];
       this.remember(key, data);
-      return this.finalize(data);
+      return this.finalize(data, mode);
     }
 
     // 2) YouTube (100 unidades). Si falla o no hay cuota, se sirve la copia vieja si existe;
@@ -151,11 +153,11 @@ export class YoutubeService implements MusicProvider, OnModuleInit {
           .upsert({ where: { key }, create: { key, results: data as any }, update: { results: data as any, createdAt: new Date() } })
           .catch((e) => this.log.warn(`No se pudo guardar la cache: ${e.message}`));
       }
-      return this.finalize(data);
+      return this.finalize(data, mode);
     } catch (e) {
       if (row) {
         this.log.warn(`YouTube no disponible: se sirve la copia guardada de "${q}"`);
-        return this.finalize(row.results as unknown as SongSearchResult[]);
+        return this.finalize(row.results as unknown as SongSearchResult[], mode);
       }
       throw e;
     }
