@@ -1,0 +1,1 @@
+ALTER TABLE "Business" ADD COLUMN "tvInterludeSec" INTEGER NOT NULL DEFAULT 8;

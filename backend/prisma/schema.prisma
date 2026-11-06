@@ -52,6 +52,12 @@ enum EventType {
   FEEDBACK_SUBMITTED
 }
 
+// OFF: solo suena lo que aprueba el DJ. AUTO: si la cola queda vacia, TONO pone musica normal (no karaoke).
+enum AutoDjMode {
+  OFF
+  AUTO
+}
+
 enum RequestStatus {
   PENDING
   APPROVED
@@ -75,6 +81,8 @@ model Business {
   // Imagen que la TV muestra entre canciones (data URL, ya reducida en el navegador)
   tvBanner          String?        @db.Text
   tvBannerAt        DateTime?
+  // Segundos que se muestra el aviso entre canciones (para pasar los microfonos de mesa en mesa)
+  tvInterludeSec    Int            @default(8)
   // Disenos que sus mesas pueden usar; vacio = todos (los define el super admin)
   allowedExperiences String[]      @default([])
   primaryColor      String         @default("#ec4899")
@@ -84,6 +92,9 @@ model Business {
   // KARAOKE: busca versiones karaoke. ANY: cualquier video de musica.
   searchMode        SearchMode     @default(KARAOKE)
   searchProvider    SearchProvider @default(YOUTUBE)
+  autoDjMode        AutoDjMode     @default(OFF)
+  // Generos que el Auto-DJ debe poner (vacio = lo mas pedido del bar)
+  autoDjGenres      String[]       @default([])
   createdAt         DateTime       @default(now())
 
   payments Payment[]
@@ -152,7 +163,9 @@ model KaraokeSession {
 model SongRequest {
   id              String        @id @default(cuid())
   businessId      String
-  tableId         String
+  // null = cancion puesta por el Auto-DJ (no la pidio ninguna mesa)
+  tableId         String?
+  auto            Boolean       @default(false)
   sessionId       String
   videoId         String
   title           String
@@ -168,7 +181,7 @@ model SongRequest {
   completedAt     DateTime?
 
   business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  table    Table          @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  table    Table?         @relation(fields: [tableId], references: [id], onDelete: Cascade)
   session  KaraokeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([businessId, sessionId, status, position])

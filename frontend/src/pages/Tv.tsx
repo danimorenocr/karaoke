@@ -51,6 +51,11 @@ export default function Tv() {
   const claimRef = useRef<() => void>(() => {});
   const stateRef = useRef<any>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [hold, setHold] = useState(false); // pausa entre canciones: aviso en pantalla mientras se pasan los microfonos
+  const holdRef = useRef(false);
+  const [bar, setBar] = useState<{ start: number; ms: number } | null>(null); // barra de carga del aviso entre canciones
+  const endedAt = useRef<number | null>(null); // cuando termino la ultima cancion: desde ahi cuenta la pausa
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     if (replacedRef.current) return;
@@ -65,6 +70,13 @@ export default function Tv() {
     }
   }, []);
 
+  function endHold() {
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+    holdRef.current = false;
+    setHold(false);
+  }
+
   /** Alinea el reproductor con lo que dice el backend. */
   function sync(s: any, forceReload = false) {
     const p = playerRef.current;
@@ -72,22 +84,52 @@ export default function Tv() {
     if (!p || !armedRef.current || !readyRef.current || replacedRef.current) return;
     const cur = s.current;
     if (!cur) {
+      endHold();
+      setBar(null);
+      endedAt.current = null;
       if (loadedId.current) p.stopVideo?.();
       loadedId.current = null;
       setPlaying(false);
       return;
     }
     if (cur.id !== loadedId.current || forceReload) {
+      const isNew = cur.id !== loadedId.current;
       loadedId.current = cur.id;
       reported.current = null;
       setBlocked(false);
       setPlaying(false);
       setSlow(false);
+      endHold();
       // Si la TV se recargo (o el servidor reinicio) a mitad de cancion, retoma donde iba
       const pos = Number(s.session?.positionSec ?? 0);
-      p.loadVideoById({ videoId: cur.videoId, startSeconds: pos > 5 ? pos - 2 : 0 });
+      const start = () => p.loadVideoById({ videoId: cur.videoId, startSeconds: pos > 5 ? pos - 2 : 0 });
+      const sec = Number(s.business?.tvInterludeSec ?? 8);
       lastPaused.current = false;
+      if (isNew && sec > 0 && pos <= 5) {
+        // Pausa entre canciones: se muestra el aviso y el video arranca al terminar la cuenta.
+        // La cuenta empieza cuando termino la cancion anterior (no cuando llega la nueva) para que sean `sec` en total.
+        const since = endedAt.current && Date.now() - endedAt.current < sec * 1000 ? Date.now() - endedAt.current : 0;
+        if (!since) setBar({ start: Date.now(), ms: sec * 1000 });
+        p.stopVideo?.();
+        holdRef.current = true;
+        setHold(true);
+        holdTimer.current = setTimeout(() => {
+          holdTimer.current = null;
+          holdRef.current = false;
+          endedAt.current = null;
+          setHold(false);
+          setBar(null);
+          if (loadedId.current !== cur.id || replacedRef.current) return;
+          start();
+          if (stateRef.current) sync(stateRef.current); // respeta una pausa del DJ que llego durante la espera
+        }, sec * 1000 - since);
+        return;
+      }
+      endedAt.current = null;
+      setBar(null);
+      start();
     }
+    if (holdRef.current) return;
     const paused = !!s.session?.paused;
     if (paused !== lastPaused.current) {
       lastPaused.current = paused;
@@ -95,12 +137,12 @@ export default function Tv() {
     }
   }
 
-  async function report(kind: 'ended' | 'error') {
+  async function report(kind: 'ended' | 'error', code?: number) {
     const id = loadedId.current;
     if (!id || reported.current === id) return;
     reported.current = id;
     try {
-      await api('POST', `/player/${kind}`, { requestId: id });
+      await api('POST', `/player/${kind}`, code ? { requestId: id, code } : { requestId: id });
     } catch {
       reported.current = null; // reintenta en el siguiente evento / recarga
     }
@@ -127,18 +169,20 @@ export default function Tv() {
             if (e.data === window.YT.PlayerState.ENDED) {
               setPlaying(false);
               setFinishedId(loadedId.current);
+              const sec = Number(stateRef.current?.business?.tvInterludeSec ?? 8);
+              if (sec > 0) { endedAt.current = Date.now(); setBar({ start: Date.now(), ms: sec * 1000 }); }
               report('ended');
             }
             if (e.data === window.YT.PlayerState.PLAYING) { setBlocked(false); setPlaying(true); }
             // Pausa que no vino del DJ (p.ej. el navegador pausa al ocultar la pestana): reanudar.
-            if (e.data === window.YT.PlayerState.PAUSED && armedRef.current && loadedId.current && !lastPaused.current) {
+            if (e.data === window.YT.PlayerState.PAUSED && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current) {
               console.info('[TV] pausa que no vino del DJ (hidden=' + document.hidden + '): reanudando');
               setTimeout(() => {
                 if (!lastPaused.current && playerRef.current?.getPlayerState?.() === window.YT.PlayerState.PAUSED) playerRef.current.playVideo();
               }, 100);
             }
           },
-          onError: () => report('error'), // video eliminado / no incrustable / etc.
+          onError: (e: any) => report('error', Number(e?.data) || undefined), // video eliminado / no incrustable / etc.
           onAutoplayBlocked: () => setBlocked(true),
         },
       });
@@ -156,7 +200,7 @@ export default function Tv() {
       if (name === 'disconnect') setOnline(false);
       // Pausa/reanuda al instante con el evento; el refetch posterior solo confirma
       if (name === 'playback.paused' && armedRef.current) { lastPaused.current = true; playerRef.current?.pauseVideo?.(); }
-      if (name === 'playback.resumed' && armedRef.current) { lastPaused.current = false; playerRef.current?.playVideo?.(); }
+      if (name === 'playback.resumed' && armedRef.current && !holdRef.current) { lastPaused.current = false; playerRef.current?.playVideo?.(); }
       if (name === 'queue.updated') load();
       if (name === 'playback.reload' && stateRef.current) sync(stateRef.current, true);
     });
@@ -175,7 +219,7 @@ export default function Tv() {
     // Cubre el caso de que el navegador pause el video al cambiar de pestana o ventana.
     const watchdog = setInterval(() => {
       const p = playerRef.current;
-      if (!armedRef.current || !readyRef.current || !loadedId.current || lastPaused.current || !p?.getPlayerState) return;
+      if (!armedRef.current || !readyRef.current || !loadedId.current || lastPaused.current || holdRef.current || !p?.getPlayerState) return;
       const st = p.getPlayerState();
       const PS = window.YT.PlayerState;
       if (st === PS.PAUSED || st === PS.CUED || st === PS.UNSTARTED) {
@@ -186,7 +230,7 @@ export default function Tv() {
     // Al volver a la pestana, asegura que el video siga sonando si no esta en pausa
     const onVisible = () => {
       const p = playerRef.current;
-      if (!document.hidden && armedRef.current && loadedId.current && !lastPaused.current && p?.getPlayerState?.() === window.YT.PlayerState.PAUSED) p.playVideo();
+      if (!document.hidden && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current && p?.getPlayerState?.() === window.YT.PlayerState.PAUSED) p.playVideo();
       if (!document.hidden) load();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -197,6 +241,7 @@ export default function Tv() {
       clearInterval(poll);
       clearInterval(beat);
       clearInterval(watchdog);
+      if (holdTimer.current) clearTimeout(holdTimer.current);
       readyRef.current = false;
       playerRef.current?.destroy?.();
       playerRef.current = null;
@@ -229,7 +274,9 @@ export default function Tv() {
   const noSession = state && !state.session;
   const idle = !cur;
   // Aviso entre canciones: se muestra hasta que el video nuevo empieza a sonar
-  const transition = armed && !!cur && !playing && !blocked && !slow;
+  const transition = armed && !!cur && (hold || (!playing && !blocked && !slow));
+  const hasBanner = !!banner;
+  const fallbackInterlude = transition && !hasBanner; // sin imagen del bar: pantalla de inicio con la mesa que sigue
   useEffect(() => {
     if (!transition) return;
     const t = setTimeout(() => setSlow(true), 15000);
@@ -238,6 +285,24 @@ export default function Tv() {
 
   return (
     <div className="fixed inset-0 bg-black text-white">
+      <style>{`
+              @keyframes tv-in{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+              @keyframes tv-glow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
+              @keyframes tv-eq{0%,100%{height:12%}50%{height:100%}}
+              @keyframes tv-pulse{0%,100%{box-shadow:0 0 0 0 #a9b8ff66}50%{box-shadow:0 0 0 18px transparent}}
+              .tv-idle>*{animation:tv-in .9s both cubic-bezier(.2,.7,.2,1)}
+              .tv-idle>*:nth-child(3){animation-delay:.12s}.tv-idle>*:nth-child(4){animation-delay:.24s}.tv-idle>*:nth-child(5){animation-delay:.36s}.tv-idle>*:nth-child(6){animation-delay:.48s}
+              .tv-idle>.tv-glow{animation:tv-glow 6s ease-in-out infinite}
+              .tv-btn{animation:tv-pulse 2.4s infinite;transition:transform .2s,filter .2s}.tv-btn:hover{transform:scale(1.04);filter:brightness(1.08)}.tv-btn:active{transform:scale(.97)}
+              .tv-eq i{display:block;width:.6rem;border-radius:9px;background:#a9b8ff;animation:tv-eq 1.2s ease-in-out infinite}
+              @keyframes tv-kb{from{opacity:0;transform:scale(1.02)}12%{opacity:1}to{opacity:1;transform:scale(1.1)}}
+              @keyframes tv-next{0%,100%{box-shadow:0 0 0 0 #a9b8ff55}50%{box-shadow:0 0 60px 6px #a9b8ff33}}
+              @keyframes tv-bar{from{width:0}to{width:100%}}
+      .tv-bar{background:#a9b8ff;box-shadow:0 0 14px #a9b8ffaa;animation:tv-bar linear both}
+      .tv-banner-anim{animation:tv-kb 12s ease-out both}
+              .tv-next{animation:tv-next 2.2s ease-in-out infinite}
+              @media (prefers-reduced-motion:reduce){.tv-idle *,.tv-banner-anim{animation:none!important}}
+            `}</style>
       {replaced && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
           <div className="grid h-20 w-20 place-items-center rounded-3xl" style={{ background: '#a9b8ff22', color: '#a9b8ff' }}><svg viewBox="0 0 24 24" className="h-10 w-10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18v12H3zM8 21h8" /></svg></div>
@@ -256,26 +321,14 @@ export default function Tv() {
         {/* Entre canciones: solo se muestra la imagen que el admin subio (si no hay, no se muestra nada) */}
         {banner && (
           <div
-            className={`pointer-events-none absolute inset-0 z-[5] bg-black transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
+            className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-black transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
           >
-            <img src={banner} alt="" className="h-full w-full object-contain" />
+            <img key={transition ? (bar?.start ?? cur?.id) : 'off'} src={banner} alt="" className={`h-full w-full object-contain ${transition ? 'tv-banner-anim' : ''}`} />
           </div>
         )}
 
-        {(!armed || idle || blocked) && (
+        {(!armed || idle || blocked || fallbackInterlude) && (
           <div className="tv-idle absolute inset-0 z-10 flex flex-col items-center justify-center gap-7 overflow-hidden bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
-            <style>{`
-              @keyframes tv-in{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
-              @keyframes tv-glow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
-              @keyframes tv-eq{0%,100%{height:12%}50%{height:100%}}
-              @keyframes tv-pulse{0%,100%{box-shadow:0 0 0 0 #a9b8ff66}50%{box-shadow:0 0 0 18px transparent}}
-              .tv-idle>*{animation:tv-in .9s both cubic-bezier(.2,.7,.2,1)}
-              .tv-idle>*:nth-child(3){animation-delay:.12s}.tv-idle>*:nth-child(4){animation-delay:.24s}.tv-idle>*:nth-child(5){animation-delay:.36s}.tv-idle>*:nth-child(6){animation-delay:.48s}
-              .tv-idle>.tv-glow{animation:tv-glow 6s ease-in-out infinite}
-              .tv-btn{animation:tv-pulse 2.4s infinite;transition:transform .2s,filter .2s}.tv-btn:hover{transform:scale(1.04);filter:brightness(1.08)}.tv-btn:active{transform:scale(.97)}
-              .tv-eq i{display:block;width:.6rem;border-radius:9px;background:#a9b8ff;animation:tv-eq 1.2s ease-in-out infinite}
-              @media (prefers-reduced-motion:reduce){.tv-idle *{animation:none!important}}
-            `}</style>
             <div className="tv-glow pointer-events-none absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#a9b8ff33,transparent 65%)' }} />
             <img src="/logo.png" alt="TONO" className="relative h-28 w-auto md:h-40" draggable={false} />
             <div className="relative text-6xl font-black tracking-tight md:text-8xl" style={{ color: '#f5ecdc' }}>{state?.business?.name ?? 'Karaoke'}</div>
@@ -293,6 +346,16 @@ export default function Tv() {
               <button onClick={() => { playerRef.current?.playVideo(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
                 Pulsa para continuar
               </button>
+            ) : cur && cur.id !== finishedId ? (
+              <div key={cur.id} className="relative flex flex-col items-center gap-3">
+                <div className="text-xl font-bold uppercase tracking-[0.3em] text-[#a9b8ff] md:text-3xl">{cur.auto ? 'Sigue' : 'Sigue la mesa'}</div>
+                <div className="tv-next rounded-3xl border border-[#a9b8ff]/40 bg-[#a9b8ff]/10 px-12 py-4 text-6xl font-black md:text-8xl" style={{ color: '#f5ecdc' }}>
+                  {cur.auto ? 'La música de TONO' : cur.tableName}
+                </div>
+                {!cur.auto && <div className="max-w-3xl truncate text-xl text-slate-300 md:text-3xl">{cur.title}</div>}
+              </div>
+            ) : cur ? (
+              <div className="relative h-24" aria-hidden />
             ) : (
               <div className="relative flex items-center gap-4 text-2xl text-slate-300 md:text-3xl">
                 <span className="tv-eq flex h-8 items-end gap-1" aria-hidden>{[0, 0.2, 0.4, 0.1, 0.3].map((d) => <i key={d} style={{ animationDelay: `${d}s` }} />)}</span>
@@ -302,6 +365,13 @@ export default function Tv() {
           </div>
         )}
       </div>
+
+      {/* Barra de carga del aviso entre canciones */}
+      {bar && transition && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[40] h-2 bg-white/15" aria-hidden>
+          <div key={bar.start} className="tv-bar h-full" style={{ animationDuration: `${bar.ms}ms` }} />
+        </div>
+      )}
 
       {/* Franja superior sobre el video (no tapa los controles de abajo) */}
       {cur && (

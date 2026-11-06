@@ -3,6 +3,7 @@ import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
 import './styles.css';
+import SearchKind from '../../core/SearchKind';
 
 /**
  * Experiencia "Harry Potter": pergamino, castillo, lechuza y libros (sepia, dorado y granate).
@@ -68,11 +69,11 @@ export default function HarryPotter({ k }: ExperienceProps) {
         blocked || full ? (
           <div className="hp-card hp-center">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</div>
         ) : (
-          <form onSubmit={k.runSearch} className="hp-search">
+          <><SearchKind k={k} /><form onSubmit={k.runSearch} className="hp-search">
             <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2.4" /><path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
             <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Buscar canción o pegar link de YouTube" enterKeyHint="search" />
             <svg className="hp-wand" viewBox="0 0 24 24" aria-hidden><path d="M4 20L15 9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /><path d="M17 3l.9 2.1L20 6l-2.1.9L17 9l-.9-2.1L14 6l2.1-.9zM21 11l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" fill="currentColor" /></svg>
-          </form>
+          </form></>
         )
       )}
 
@@ -190,6 +191,7 @@ export default function HarryPotter({ k }: ExperienceProps) {
         <div className="hp-modal" role="dialog" aria-modal="true" aria-labelledby="hp-confirm-title" onClick={() => k.setStep('results')}>
           <div className="hp-dialog" onClick={(e) => e.stopPropagation()}>
             <span className="hp-script" id="hp-confirm-title">¿Lanzamos el hechizo?</span>
+            {picked.song.thumbnail && <img className="hp-thumb" src={picked.song.thumbnail} alt="" />}
             <b>{picked.song.title}</b>
             <p>Se agregará a la cola a nombre de <b>{state.table.name}</b> ({holding + 1} de {state.maxPending} permitidas).</p>
             <div className="hp-actions">

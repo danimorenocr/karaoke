@@ -533,11 +533,11 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
   const [banner, setBanner] = useState<string | null>(biz.tvBanner ?? null);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY' });
+  const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, logoUrl: f.logoUrl || undefined, maxPendingPerTable: Number(f.maxPendingPerTable), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, logoUrl: f.logoUrl || undefined, maxPendingPerTable: Number(f.maxPendingPerTable), tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
@@ -586,7 +586,12 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
             {banner ? <img src={banner} alt="Banner de la TV" className="h-full w-full object-contain" /> : <span className="px-4 text-center text-xs text-slate-500">Sin imagen: la TV muestra el nombre del bar</span>}
           </div>
           <div className="grid gap-3 text-sm">
-            <p className="text-slate-300">Esta imagen aparece en la TV entre una canción y otra, mientras carga el siguiente video. Usa una imagen horizontal (16:9, por ejemplo 1920 x 1080); PNG, JPG o WebP.</p>
+            <p className="text-slate-300">Esta imagen aparece en la TV entre una canción y otra, para que dé tiempo de pasar los micrófonos de mesa en mesa. Usa una imagen horizontal (16:9, por ejemplo 1920 x 1080); PNG, JPG o WebP. Si no subes ninguna, la TV muestra la pantalla de inicio con el nombre de la siguiente mesa.</p>
+            <label className="grid max-w-xs gap-1.5">
+              <span className="font-medium text-slate-300">Segundos entre canciones</span>
+              <input type="number" min={0} max={60} value={f.tvInterludeSec} onChange={(e) => setF({ ...f, tvInterludeSec: e.target.value as any })} className="h-11 rounded-xl border border-white/10 bg-white/5 px-3 outline-none focus:border-white/30" />
+              <span className="text-xs text-slate-500">Por defecto 8. Pon 0 para pasar directo a la siguiente canción.</span>
+            </label>
             <div className="flex flex-wrap gap-2">
               <label className="cursor-pointer rounded-xl bg-white/10 px-4 py-2 font-semibold hover:bg-white/15">
                 {banner ? 'Cambiar imagen' : 'Subir imagen'}

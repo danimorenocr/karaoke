@@ -3,6 +3,8 @@ import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
 import './styles.css';
+import SearchKind from '../../core/SearchKind';
+import ConfirmSheet from '../../core/ConfirmSheet';
 
 /** Experiencia "Neon World": consola futurista (HUD) con módulos de neón. Navegación por módulos laterales. */
 type Mod = 'request' | 'queue' | 'mine';
@@ -47,11 +49,11 @@ export default function NeonWorld({ k }: ExperienceProps) {
               blocked || full ? (
                 <div className="nw-panel warn">{blocked || `LÍMITE ALCANZADO: ${holding}/${state.maxPending} señales activas. Espera a que termine una.`}</div>
               ) : (
-                <form onSubmit={k.runSearch} className="nw-search">
+                <><SearchKind k={k} /><form onSubmit={k.runSearch} className="nw-search">
                   <span>&gt;_</span>
                   <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="canción, artista o link" enterKeyHint="search" />
                   <button disabled={k.q.trim().length < 3}>BUSCAR</button>
-                </form>
+                </form></>
               )
             )}
 
@@ -82,16 +84,11 @@ export default function NeonWorld({ k }: ExperienceProps) {
             )}
 
             {step === 'confirm' && picked && (
-              <div className="nw-panel">
-                <div className="nw-label">CONFIRMAR TRANSMISIÓN</div>
-                <img className="nw-cover" src={picked.song.thumbnail} alt="" />
-                <b>{picked.song.title}</b>
-                <p>Mesa {state.table.name} · {holding + 1}/{state.maxPending} señales</p>
-                <div className="nw-actions">
-                  <button className="nw-go" onClick={k.confirm}>ENVIAR</button>
-                  <button className="nw-ghost" onClick={() => k.setStep('results')}>CAMBIAR</button>
-                </div>
-              </div>
+              <ConfirmSheet
+                song={picked.song} tableName={state.table.name} slot={holding + 1} max={state.maxPending} heading="Confirmar transmisión" confirmLabel="Enviar" cancelLabel="Cambiar"
+                theme={{ surface: '#0b0b2a', fg: '#dbeafe', mute: '#7c8bb5', line: 'rgba(34,211,238,.4)', accent: '#22d3ee', onAccent: '#05051a', radius: 6, btnRadius: 4, upper: true, font: "ui-monospace, 'Cascadia Code', Consolas, Menlo, monospace" }}
+                onConfirm={k.confirm} onCancel={() => k.setStep('results')}
+              />
             )}
 
             {step === 'done' && (

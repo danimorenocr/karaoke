@@ -1,0 +1,6 @@
+CREATE TYPE "AutoDjMode" AS ENUM ('OFF', 'AUTO');
+
+ALTER TABLE "Business" ADD COLUMN "autoDjMode" "AutoDjMode" NOT NULL DEFAULT 'OFF';
+
+ALTER TABLE "SongRequest" ALTER COLUMN "tableId" DROP NOT NULL;
+ALTER TABLE "SongRequest" ADD COLUMN "auto" BOOLEAN NOT NULL DEFAULT false;

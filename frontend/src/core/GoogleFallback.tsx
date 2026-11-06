@@ -13,7 +13,7 @@ export default function GoogleFallback({ k, light = false }: { k: Karaoke; light
       <GoogleSearch
         light={light}
         query={g.query}
-        mode={k.state.business.searchMode}
+        mode={k.kind}
         onResults={g.setItems}
         onError={k.setErrorMsg}
         onLoading={g.setLoading}

@@ -3,6 +3,7 @@ import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
 import './styles.css';
+import SearchKind from '../../core/SearchKind';
 
 /**
  * Experiencia "Latin Collage": collage latino de papel y pintura (turquesa, naranja, crema).
@@ -51,10 +52,10 @@ export default function LatinCollage({ k }: ExperienceProps) {
         blocked || full ? (
           <div className="lc-card lc-center">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</div>
         ) : (
-          <form onSubmit={k.runSearch} className="lc-search">
+          <><SearchKind k={k} /><form onSubmit={k.runSearch} className="lc-search">
             <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2.4" /><path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
             <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Buscar canción o pegar link de YouTube" enterKeyHint="search" />
-          </form>
+          </form></>
         )
       )}
 
@@ -176,6 +177,7 @@ export default function LatinCollage({ k }: ExperienceProps) {
         <div className="lc-modal" role="dialog" aria-modal="true" aria-labelledby="lc-confirm-title" onClick={() => k.setStep('results')}>
           <div className="lc-dialog" onClick={(e) => e.stopPropagation()}>
             <span className="lc-script" id="lc-confirm-title">¿La pedimos?</span>
+            {picked.song.thumbnail && <img className="lc-thumb" src={picked.song.thumbnail} alt="" />}
             <b>{picked.song.title}</b>
             <p>Se agregará a la cola a nombre de <b>{state.table.name}</b> ({holding + 1} de {state.maxPending} permitidas).</p>
             <div className="lc-actions">

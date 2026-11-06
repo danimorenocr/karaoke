@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Module, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { YoutubeModule } from '../youtube/youtube.module';
@@ -23,12 +23,18 @@ class DjAddDto {
   @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
   @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
 }
+class AutoDjDto {
+  @IsOptional() @IsIn(['OFF', 'AUTO']) mode?: 'OFF' | 'AUTO';
+  @IsOptional() @IsArray() @IsString({ each: true }) genres?: string[];
+}
 class HeartbeatDto {
   @IsOptional() @IsString() requestId?: string;
   @IsOptional() @IsInt() @Min(0) @Max(36000) positionSec?: number;
 }
 class RequestRefDto {
   @IsString() requestId: string;
+  /** Codigo de error del reproductor de YouTube (solo en /player/error). */
+  @IsOptional() @IsInt() code?: number;
 }
 
 const biz = (u: AuthUser) => u.businessId!;
@@ -56,6 +62,7 @@ class DjController {
   @Post('session/stop') stop(@CurrentUser() u: AuthUser) { return this.q.stopSession(biz(u)); }
   @Patch('session/requests-open') open(@CurrentUser() u: AuthUser, @Body() b: FlagDto) { return this.q.setRequestsOpen(biz(u), b.value); }
   @Patch('playback/paused') pause(@CurrentUser() u: AuthUser, @Body() b: FlagDto) { return this.q.setPaused(biz(u), b.value); }
+  @Patch('autodj') autodj(@CurrentUser() u: AuthUser, @Body() b: AutoDjDto) { return this.q.setAutoDj(biz(u), b.mode, b.genres); }
   @Post('playback/skip') skip(@CurrentUser() u: AuthUser) { return this.q.skip(biz(u)); }
   @Post('playback/reload') reload(@CurrentUser() u: AuthUser) { return this.q.reloadCurrent(biz(u)); }
   @Patch('requests/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.q.approve(biz(u), id); }
@@ -77,7 +84,7 @@ class PlayerController {
   @Post('heartbeat') heartbeat(@CurrentUser() u: AuthUser, @Body() b: HeartbeatDto) { return this.q.playerHeartbeat(biz(u), b.requestId, b.positionSec); }
   @Post('next') next(@CurrentUser() u: AuthUser) { return this.q.playerNext(biz(u)); }
   @Post('ended') ended(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerEnded(biz(u), b.requestId); }
-  @Post('error') error(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerError(biz(u), b.requestId); }
+  @Post('error') error(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerError(biz(u), b.requestId, b.code); }
 }
 
 @Module({ imports: [YoutubeModule], controllers: [DjController, PlayerController], providers: [QueueService], exports: [QueueService] })

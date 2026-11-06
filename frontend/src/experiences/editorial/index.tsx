@@ -3,6 +3,8 @@ import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
 import './styles.css';
+import SearchKind from '../../core/SearchKind';
+import ConfirmSheet from '../../core/ConfirmSheet';
 
 /** Experiencia "Editorial": una página de revista, de lectura continua (sin pestañas). */
 export default function Editorial({ k }: ExperienceProps) {
@@ -46,10 +48,10 @@ export default function Editorial({ k }: ExperienceProps) {
           blocked || full ? (
             <p className="ed-lede">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</p>
           ) : (
-            <form onSubmit={k.runSearch} className="ed-search">
+            <><SearchKind k={k} /><form onSubmit={k.runSearch} className="ed-search">
               <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Título, artista o link de YouTube" enterKeyHint="search" />
               <button disabled={k.q.trim().length < 3}>Buscar →</button>
-            </form>
+            </form></>
           )
         )}
 
@@ -85,16 +87,11 @@ export default function Editorial({ k }: ExperienceProps) {
         )}
 
         {step === 'confirm' && picked && (
-          <div className="ed-confirm">
-            <div className="ed-rule">¿La publicamos?</div>
-            {picked.song.thumbnail && <img src={picked.song.thumbnail} alt="" />}
-            <h3>{picked.song.title}</h3>
-            <p>A nombre de {state.table.name} · {holding + 1} de {state.maxPending} permitidas.</p>
-            <div className="ed-actions">
-              <button className="ed-btn" onClick={k.confirm}>Sí, pedirla</button>
-              <button className="ed-btn alt" onClick={() => k.setStep('results')}>Elegir otra</button>
-            </div>
-          </div>
+          <ConfirmSheet
+            song={picked.song} tableName={state.table.name} slot={holding + 1} max={state.maxPending} heading="¿La publicamos?"
+            theme={{ surface: '#f4efe6', fg: '#1a1816', mute: '#6f685d', line: 'rgba(26,24,22,.28)', accent: '#c8321e', onAccent: '#fff', radius: 4, btnRadius: 2, font: "Georgia, 'Times New Roman', serif" }}
+            onConfirm={k.confirm} onCancel={() => k.setStep('results')}
+          />
         )}
 
         {step === 'done' && (

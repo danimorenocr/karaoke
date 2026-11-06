@@ -3,6 +3,8 @@ import { fmtDuration } from '../../lib/api';
 import { Thumb } from '../../components/ui';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, HOLDING, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
+import SearchKind from '../../core/SearchKind';
+import ConfirmSheet from '../../core/ConfirmSheet';
 
 /**
  * Experiencia "Clásica": conversacion minimalista con la identidad de la landing de Tono
@@ -99,7 +101,7 @@ export default function Classic({ k }: ExperienceProps) {
             {blocked || <>Tu mesa ya tiene <b>{holding}</b> canciones sin terminar (máximo {state.maxPending}). Cuando termine una podrás pedir otra.</>}
           </Assistant>
         ) : (
-          <form onSubmit={runSearch} className="msg-in mt-1 flex items-center gap-2 rounded-full border py-1.5 pl-5 pr-1.5" style={{ background: C.card, borderColor: C.line }}>
+          <><SearchKind k={k} /><form onSubmit={runSearch} className="msg-in mt-1 flex items-center gap-2 rounded-full border py-1.5 pl-5 pr-1.5" style={{ background: C.card, borderColor: C.line }}>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -111,7 +113,7 @@ export default function Classic({ k }: ExperienceProps) {
             <button disabled={q.trim().length < 3} className="cl-btn grid h-10 w-10 shrink-0 place-items-center rounded-full disabled:opacity-25" style={{ background: accent, color: on }} aria-label="Buscar">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
             </button>
-          </form>
+          </form></>
         )
       )}
 
@@ -153,15 +155,11 @@ export default function Classic({ k }: ExperienceProps) {
       {(step === 'confirm' || step === 'adding' || step === 'done') && picked && <User>{picked.song.title}</User>}
 
       {step === 'confirm' && picked && (
-        <>
-          <Assistant>
-            ¿La pedimos? Se agregará a la cola a nombre de <b>{state.table.name}</b> ({holding + 1} de {state.maxPending} permitidas).
-          </Assistant>
-          <div className="msg-in flex gap-2">
-            <button className={btn} style={primary} onClick={confirm}>Sí, pedirla</button>
-            <button className={btn} style={ghost} onClick={() => setStep('results')}>Elegir otra</button>
-          </div>
-        </>
+        <ConfirmSheet
+          song={picked.song} tableName={state.table.name} slot={holding + 1} max={state.maxPending}
+          theme={{ surface: C.card, fg: C.cream, mute: C.mute, line: 'rgba(255,255,255,.12)', accent, onAccent: on, radius: 26, font: "'Nunito', system-ui, sans-serif" }}
+          onConfirm={confirm} onCancel={() => setStep('results')}
+        />
       )}
 
       {step === 'done' && (

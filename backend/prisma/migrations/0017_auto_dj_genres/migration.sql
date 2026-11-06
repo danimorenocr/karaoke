@@ -1,0 +1,1 @@
+ALTER TABLE "Business" ADD COLUMN "autoDjGenres" TEXT[] DEFAULT ARRAY[]::TEXT[];

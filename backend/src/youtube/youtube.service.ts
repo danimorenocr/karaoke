@@ -1,5 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 
 export interface SongSearchResult {
   videoId: string;
@@ -9,6 +9,8 @@ export interface SongSearchResult {
   durationSec?: number;
   viewCount?: number;
   isMusic?: boolean;
+  /** Canal de sello/VEVO: suele tener bloqueo de reproduccion incrustada; el cliente lo pone al final. */
+  risky?: boolean;
 }
 
 /** Abstraccion para poder cambiar de proveedor sin tocar cola ni mesas. */
@@ -17,6 +19,24 @@ export interface MusicProvider {
 }
 
 const VIDEO_ID = /^[\w-]{11}$/;
+
+/** Pais donde esta la TV del bar (YouTube bloquea videos por pais). Configurable con YOUTUBE_REGION. */
+const REGION = (process.env.YOUTUBE_REGION || 'CO').toUpperCase();
+
+/** false si el video dara error en el reproductor: bloqueado en el pais de la TV o con restriccion de edad. */
+function playableHere(v: any): boolean {
+  const cd = v.contentDetails ?? {};
+  const rr = cd.regionRestriction;
+  if (rr?.blocked?.includes(REGION)) return false;
+  if (rr?.allowed && !rr.allowed.includes(REGION)) return false;
+  if (cd.contentRating?.ytRating === 'ytAgeRestricted') return false;
+  return true;
+}
+export const KARAOKE_RE = /karaoke|instrumental|pista|sing[- ]?along/i;
+const LABEL_RE = /vevo|records?|universal music|sony music|warner|umg|bmg|music group|entertainment|- topic$/i;
+/** Un canal de karaoke casi nunca esta bloqueado; los de sellos discograficos con frecuencia si. */
+const isRisky = (v: { title: string; channelTitle: string }) => !KARAOKE_RE.test(`${v.title} ${v.channelTitle}`) && LABEL_RE.test(v.channelTitle);
+const BLOCK_PREFIX = 'blocked:';
 // Pistas de que un video es musical (cuando YouTube no da la categoria)
 const MUSIC_RE = /karaoke|lyrics?|letra|instrumental|official (audio|video|music)|(video|audio) oficial|m[uú]sica|music|cover|remix|en vivo|live|feat\.|ft\.|vevo|- topic|session|acoustic|ac[uú]stic/i;
 const TTL_MS = 60 * 60 * 1000;
@@ -42,9 +62,33 @@ function isoToSeconds(iso: string): number {
 }
 
 @Injectable()
-export class YoutubeService implements MusicProvider {
+export class YoutubeService implements MusicProvider, OnModuleInit {
   private log = new Logger('Youtube');
   constructor(private prisma: PrismaService) {}
+  /** Videos que ya fallaron en la TV por bloqueo de derechos: no se vuelven a ofrecer a nadie. */
+  private blocked = new Set<string>();
+
+  async onModuleInit() {
+    const rows = await this.prisma.searchCache.findMany({ where: { key: { startsWith: BLOCK_PREFIX } }, select: { key: true } }).catch(() => []);
+    rows.forEach((r) => this.blocked.add(r.key.slice(BLOCK_PREFIX.length)));
+    if (rows.length) this.log.log(`${rows.length} videos bloqueados cargados`);
+  }
+
+  /** Se llama cuando el reproductor de la TV no pudo reproducir el video (bloqueado/no disponible). */
+  async markBlocked(videoId: string) {
+    if (!VIDEO_ID.test(videoId) || this.blocked.has(videoId)) return;
+    this.blocked.add(videoId);
+    this.cache.clear(); // las busquedas en memoria pueden contenerlo
+    this.log.warn(`Video bloqueado para reproduccion incrustada: ${videoId}`);
+    await this.prisma.searchCache
+      .upsert({ where: { key: BLOCK_PREFIX + videoId }, create: { key: BLOCK_PREFIX + videoId, results: [] }, update: {} })
+      .catch((e) => this.log.warn(`No se pudo guardar el bloqueo: ${e.message}`));
+  }
+
+  /** Quita los videos bloqueados y marca los de canales de sello (tambien en resultados guardados antes). */
+  private finalize(data: SongSearchResult[]): SongSearchResult[] {
+    return data.filter((v) => !this.blocked.has(v.videoId)).map((v) => ({ ...v, risky: isRisky(v) }));
+  }
   private cache = new Map<string, { at: number; data: SongSearchResult[] }>();
   private quotaBlockedUntil = 0;
   private use = { day: '', searches: 0, videos: 0 };
@@ -79,12 +123,13 @@ export class YoutubeService implements MusicProvider {
       throw new ServiceUnavailableException('Este establecimiento busca canciones con Google');
     }
     const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
+    if (hit && Date.now() - hit.at < TTL_MS) return this.finalize(hit.data);
 
     if (id) {
+      if (this.blocked.has(id)) throw new BadRequestException('Este video no se puede reproducir en la TV (bloqueado por derechos de autor)');
       const data = await this.byId(id);
       this.remember(key, data);
-      return data;
+      return this.finalize(data);
     }
 
     // 1) Cache en la base de datos: no gasta cuota y sobrevive a reinicios y despliegues
@@ -93,7 +138,7 @@ export class YoutubeService implements MusicProvider {
       this.prisma.searchCache.update({ where: { key }, data: { hits: { increment: 1 } } }).catch(() => {});
       const data = row.results as unknown as SongSearchResult[];
       this.remember(key, data);
-      return data;
+      return this.finalize(data);
     }
 
     // 2) YouTube (100 unidades). Si falla o no hay cuota, se sirve la copia vieja si existe;
@@ -106,11 +151,11 @@ export class YoutubeService implements MusicProvider {
           .upsert({ where: { key }, create: { key, results: data as any }, update: { results: data as any, createdAt: new Date() } })
           .catch((e) => this.log.warn(`No se pudo guardar la cache: ${e.message}`));
       }
-      return data;
+      return this.finalize(data);
     } catch (e) {
       if (row) {
         this.log.warn(`YouTube no disponible: se sirve la copia guardada de "${q}"`);
-        return row.results as unknown as SongSearchResult[];
+        return this.finalize(row.results as unknown as SongSearchResult[]);
       }
       throw e;
     }
@@ -125,7 +170,7 @@ export class YoutubeService implements MusicProvider {
 
   /** Devuelve solo los ids que se pueden reproducir en un reproductor incrustado (disponibles y no restringidos). */
   async filterEmbeddable(rawIds: string[], musicOnly = false): Promise<{ ok: string[]; titles: Record<string, string> }> {
-    const ids = [...new Set(rawIds.filter((i) => VIDEO_ID.test(i)))].slice(0, 20);
+    const ids = [...new Set(rawIds.filter((i) => VIDEO_ID.test(i) && !this.blocked.has(i)))].slice(0, 20);
     const fresh = (id: string) => {
       const c = this.embeddable.get(id);
       return c && Date.now() - c.at < 6 * TTL_MS ? c : null;
@@ -194,7 +239,7 @@ export class YoutubeService implements MusicProvider {
     url.search = new URLSearchParams({ part: 'snippet,contentDetails,status,statistics', id: ids.join(','), key: this.key() }).toString();
     const j: any = await this.call(url);
     return (j.items ?? [])
-      .filter((v: any) => v.status?.embeddable !== false)
+      .filter((v: any) => v.status?.embeddable !== false && v.status?.privacyStatus !== 'private' && playableHere(v))
       .map((v: any) => ({
         videoId: v.id,
         title: v.snippet.title,

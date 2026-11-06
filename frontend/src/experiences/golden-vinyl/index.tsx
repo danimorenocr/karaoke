@@ -3,6 +3,8 @@ import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
 import './styles.css';
+import SearchKind from '../../core/SearchKind';
+import ConfirmSheet from '../../core/ConfirmSheet';
 
 /** Experiencia "Golden Vinyl": un tocadiscos dorado. Una pantalla con el vinilo y tres pestañas. */
 type Tab = 'pedir' | 'cola' | 'mias';
@@ -42,10 +44,10 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
         blocked || full ? (
           <p className="gv-note">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</p>
         ) : (
-          <form onSubmit={k.runSearch} className="gv-search">
+          <><SearchKind k={k} /><form onSubmit={k.runSearch} className="gv-search">
             <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Canción, artista o link de YouTube" enterKeyHint="search" />
             <button disabled={k.q.trim().length < 3}>Buscar</button>
-          </form>
+          </form></>
         )
       )}
 
@@ -79,15 +81,11 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
       )}
 
       {step === 'confirm' && picked && (
-        <div className="gv-card">
-          <img src={picked.song.thumbnail} alt="" />
-          <b>{picked.song.title}</b>
-          <p>Se agregará a la cola de <b>{state.table.name}</b> ({holding + 1} de {state.maxPending}).</p>
-          <div className="gv-actions">
-            <button className="gv-gold" onClick={k.confirm}>Poner el disco</button>
-            <button className="gv-ghost" onClick={() => k.setStep('results')}>Elegir otra</button>
-          </div>
-        </div>
+        <ConfirmSheet
+          song={picked.song} tableName={state.table.name} slot={holding + 1} max={state.maxPending} heading="¿Ponemos el disco?" confirmLabel="Poner el disco"
+          theme={{ surface: '#231709', fg: '#f5e9cf', mute: '#a8946b', line: 'rgba(224,176,74,.28)', accent: '#e0b04a', onAccent: '#140d05', radius: 22, font: "Georgia, 'Times New Roman', serif" }}
+          onConfirm={k.confirm} onCancel={() => k.setStep('results')}
+        />
       )}
 
       {step === 'done' && (

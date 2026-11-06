@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
 import DjSearch from '../components/DjSearch';
@@ -82,7 +82,29 @@ export default function Dj() {
     return () => { off(); clearInterval(poll); };
   }, [load]);
 
-  const act = (method: string, path: string, body?: unknown) => run(async () => { await api(method, path, body); await load(); });
+  // Pantalla de carga: si la accion tarda mas de 0,3 s se bloquea la pantalla con un aviso (evita doble clic y la sensacion de que se trabo)
+  const [working, setWorking] = useState<string | null>(null);
+  const pendingN = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const workLabel = (method: string, path: string, body: any) =>
+    path.includes('autodj') ? (body?.genres ? 'Buscando canciones de esos géneros…' : 'Cambiando el Auto-DJ…')
+    : path.includes('approve') ? 'Aprobando la canción…'
+    : path.includes('reject') ? 'Quitando la canción…'
+    : path.includes('skip') ? 'Pasando a la siguiente…'
+    : path.includes('reorder') ? 'Reordenando la cola…'
+    : 'Procesando…';
+  const act = (method: string, path: string, body?: unknown) => {
+    const label = workLabel(method, path, body);
+    pendingN.current++;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setWorking(label), 300);
+    return run(async () => {
+      try { await api(method, path, body); await load(); }
+      finally {
+        if (--pendingN.current <= 0) { pendingN.current = 0; clearTimeout(timer.current); setWorking(null); }
+      }
+    });
+  };
 
   const move = (i: number, dir: -1 | 1) => {
     const ids = s.queue.map((r: any) => r.id);
@@ -176,11 +198,18 @@ export default function Dj() {
             <span key="t" className={tvConnected ? '' : 'text-amber-300'}>{tvConnected ? 'TV conectada' : 'TV desconectada'}</span>,
             session ? <span key="s">{session.requestsOpen ? 'Solicitudes abiertas' : 'Solicitudes bloqueadas'}</span> : null,
             <span key="a">{s.business.autoApprove ? 'Aprobación automática' : 'Aprobación manual'}</span>,
+            s.business.autoDjMode === 'AUTO' ? <span key="dj">Auto-DJ (música normal)</span> : null,
           ].filter(Boolean).flatMap((x, i) => (i ? [<span key={`d${i}`} className="mx-2 text-slate-600">·</span>, x] : [x]))}
         </p>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {session ? (
             <>
+              <Btn
+                kind={s.business.autoDjMode === 'AUTO' ? 'accent' : undefined}
+                onClick={() => act('PATCH', '/dj/autodj', { mode: s.business.autoDjMode === 'AUTO' ? 'OFF' : 'AUTO' })}
+              >
+                {s.business.autoDjMode === 'AUTO' ? 'Auto-DJ: activado' : 'Auto-DJ: apagado'}
+              </Btn>
               <Btn onClick={() => act('PATCH', '/dj/session/requests-open', { value: !session.requestsOpen })}>
                 {session.requestsOpen ? 'Bloquear solicitudes' : 'Abrir solicitudes'}
               </Btn>
@@ -250,6 +279,27 @@ export default function Dj() {
 
                 <DjSearch tables={s.tables} mode={s.business.searchMode} onAdded={load} toast={toast} />
 
+                {s.business.autoDjMode === 'AUTO' && (
+                  <Card title="Géneros del Auto-DJ">
+                    <p className="mb-3 text-xs text-slate-400">
+                      Elige los géneros que sonarán cuando no haya solicitudes. Sin ninguno, TONO usa lo más pedido en tu bar. Siempre son versiones normales, no karaoke.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(s.business.autoDjCatalog ?? []).map((g: string) => {
+                        const on = (s.business.autoDjGenres ?? []).includes(g);
+                        const next = on ? s.business.autoDjGenres.filter((x: string) => x !== g) : [...(s.business.autoDjGenres ?? []), g];
+                        return (
+                          <button key={g} onClick={() => act('PATCH', '/dj/autodj', { genres: next })}
+                            className="rounded-full border px-3 py-1.5 text-sm font-medium"
+                            style={on ? { background: ACCENT, borderColor: ACCENT, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.15)', color: '#cbd5e1' }}>
+                            {g}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                )}
+
                 <Card title="Por aprobar" count={s.pending.length}>
                   {s.pending.length === 0 ? (
                     <p className="p-6 text-center text-sm text-slate-500">Sin solicitudes pendientes.</p>
@@ -274,8 +324,8 @@ export default function Dj() {
                 </Card>
               </div>
 
-              <Card title="Cola de reproducción" count={s.queue.length} className="self-start">
-                {s.queue.length === 0 ? (
+              <Card title="Cola de reproducción" count={s.queue.length + (s.autoQueue?.length ?? 0)} className="self-start">
+                {s.queue.length === 0 && !s.autoQueue?.length ? (
                   <p className="p-6 text-center text-sm text-slate-500">La cola está vacía.</p>
                 ) : (
                   <div className="space-y-2">
@@ -294,6 +344,23 @@ export default function Dj() {
                         </div>
                       </div>
                     ))}
+                    {s.autoQueue?.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          <span>Auto-DJ · siguen después de las solicitudes</span>
+                        </div>
+                        {s.autoQueue.map((r: any) => (
+                          <div key={r.id} className="flex items-center gap-3 rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-2.5">
+                            <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium">{r.title}</div>
+                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}</div>
+                            </div>
+                            <button title="Quitar" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 )}
               </Card>
@@ -302,6 +369,17 @@ export default function Dj() {
           {tab === 'tables' && <Card title="Mesas" count={s.tables.filter((t: any) => t.waiting > 0).length}>{tablesList}</Card>}
           {tab === 'history' && <Card title="Recientes" count={s.history.length}>{historyList}</Card>}
         </>
+      )}
+      {working && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" role="status" aria-live="polite">
+          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#0b1624] px-5 py-4 shadow-2xl">
+            <svg className="h-6 w-6 animate-spin" viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16" stroke={ACCENT + '33'} strokeWidth="5" />
+              <path d="M20 4a16 16 0 0116 16" stroke={ACCENT} strokeWidth="5" strokeLinecap="round" />
+            </svg>
+            <span className="text-sm font-medium text-slate-100">{working}</span>
+          </div>
+        </div>
       )}
       {node}
     </Shell>

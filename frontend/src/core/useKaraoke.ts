@@ -29,6 +29,7 @@ export function useKaraoke(token: string | undefined) {
   const [step, setStep] = useState<Step>('ask');
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('');
+  const [kind, setKind] = useState<'KARAOKE' | 'ANY'>('KARAOKE'); // karaoke o normal
   const [results, setResults] = useState<any[]>([]);
   const [picked, setPicked] = useState<{ song: any; source: Source } | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
@@ -86,7 +87,7 @@ export function useKaraoke(token: string | undefined) {
   const full = !!state && holding >= state.maxPending;
   const blocked = !state ? '' : !state.session ? 'El karaoke aún no ha comenzado.' : !state.session.open ? 'Las solicitudes están pausadas por ahora.' : '';
   const heldIds = new Set(mine.filter((r) => HOLDING.includes(r.status)).map((r) => r.videoId));
-  const sorted = [...results].sort((a, b) => (b.viewCount ?? -1) - (a.viewCount ?? -1));
+  const sorted = [...results].sort((a, b) => Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1));
   const showSkeleton = step === 'searching' || (step === 'results' && !!googleQuery && googleLoading && googleItems.length === 0);
   const done = doneId ? mine.find((r) => r.id === doneId) : null;
   const pos = done && state ? state.queue.findIndex((r: any) => r.id === done.id) + 1 : 0;
@@ -110,7 +111,7 @@ export function useKaraoke(token: string | undefined) {
     setStep('searching');
     const seq = ++searchSeq.current;
     try {
-      const found = await pub('GET', `/public/${token}/search?q=${encodeURIComponent(t)}`);
+      const found = await pub('GET', `/public/${token}/search?q=${encodeURIComponent(t)}&mode=${kind}`);
       if (seq !== searchSeq.current) return; // llego una respuesta vieja: ya hay una busqueda mas reciente
       setResults(found);
       setStep('results');
@@ -157,9 +158,10 @@ export function useKaraoke(token: string | undefined) {
         durationSec: song.durationSec,
         clientId: clientId(),
       });
-      setDoneId(r.id);
       await load();
-      setStep('done');
+      // Sin pantalla de "pedir otra": avisa y vuelve directo al buscador
+      toast(r.status === 'PENDING' ? '¡Canción pedida! El DJ la revisará en un momento.' : '¡Canción pedida! Ya está en la cola.');
+      again();
     } catch (err: any) {
       setErrorMsg(err.message);
       setStep('error');
@@ -194,7 +196,7 @@ export function useKaraoke(token: string | undefined) {
   return {
     token, state, invalid, toast, toastNode, accent,
     mine, holding, full, blocked, sorted, showSkeleton, done, doneText,
-    step, setStep, q, setQ, term, picked, errorMsg, setErrorMsg, lineIdx,
+    step, setStep, q, setQ, kind, setKind, term, picked, errorMsg, setErrorMsg, lineIdx,
     google: { query: googleQuery, ever: googleEver, items: googleItems, setItems: setGoogleItems, setLoading: setGoogleLoading },
     runSearch, pick, confirm, again, cancel, canRate, sendFeedback, dismissFeedback,
   };

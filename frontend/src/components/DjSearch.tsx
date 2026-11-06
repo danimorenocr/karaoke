@@ -104,7 +104,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
     }
   };
 
-  const shown = sort === 'views' ? [...results].sort((a, b) => (b.viewCount ?? -1) - (a.viewCount ?? -1)) : results;
+  const shown = sort === 'views' ? [...results].sort((a, b) => Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1)) : results;
 
   return (
     <Card

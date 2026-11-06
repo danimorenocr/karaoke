@@ -132,3 +132,5 @@
 .lc-root .kx-toast-error::before { content: '!'; background: #c0392b; }
 @keyframes lc-toast { from { opacity: 0; transform: translate(-50%, -22px) scale(.95); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .lc-root .kx-toast { animation: none; } }
+
+.lc-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; border: 2px solid currentColor; box-shadow: 0 6px 18px rgba(0,0,0,.3); }
