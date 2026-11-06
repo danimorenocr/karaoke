@@ -60,6 +60,7 @@ export default function Editorial({ k }: ExperienceProps) {
         {step === 'results' && (
           <>
             <div className="ed-rule">Resultados · «{term}»</div>
+            <button type="button" className="ed-btn alt" onClick={() => { k.setStep('ask'); }} style={{ alignSelf: 'flex-start', margin: '4px 0 10px' }}>← Buscar otra canción</button>
             {sorted.length === 0 && !google.query && <p className="ed-lede">Sin resultados. Prueba con otro título o con el artista.</p>}
             <ol className="ed-results">
               {sorted.map((s, i) => (

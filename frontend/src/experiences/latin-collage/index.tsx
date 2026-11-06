@@ -68,6 +68,7 @@ export default function LatinCollage({ k }: ExperienceProps) {
       {step === 'results' && (
         <>
           <div className="lc-banner"><span>Resultados · {term}</span></div>
+          <button type="button" className="lc-btn alt" onClick={() => { k.setStep('ask'); }} style={{ alignSelf: 'flex-start', margin: '4px 0 10px' }}>← Buscar otra canción</button>
           {sorted.length === 0 && !google.query && <div className="lc-card lc-center">No encontré nada. Prueba con otro nombre o con el artista.</div>}
           <ul className="lc-list">
             {sorted.map((s) => (

@@ -129,6 +129,7 @@ export default function Classic({ k }: ExperienceProps) {
       {step === 'results' && (
         <>
           {(sorted.length > 0 || googleItems.length > 0) && <Assistant>Elige un video</Assistant>}
+          <button type="button" className={`${btn} self-start`} style={ghost} onClick={() => setStep('ask')}>← Buscar otra canción</button>
           {sorted.length === 0 && !googleQuery && <Assistant>No encontré nada con «{term}». Prueba con otro nombre o con el artista.</Assistant>}
           <div className="space-y-2">
             {sorted.map((s) => (

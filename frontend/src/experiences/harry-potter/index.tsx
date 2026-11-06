@@ -86,6 +86,7 @@ export default function HarryPotter({ k }: ExperienceProps) {
       {step === 'results' && (
         <>
           <div className="hp-banner"><span>Resultados · {term}</span></div>
+          <button type="button" className="hp-btn alt" onClick={() => { k.setStep('ask'); }} style={{ alignSelf: 'flex-start', margin: '4px 0 10px' }}>← Buscar otra canción</button>
           {sorted.length === 0 && !google.query && <div className="hp-card hp-center">No encontré nada. Prueba con otro nombre o con el artista.</div>}
           <ul className="hp-list">
             {sorted.map((s) => (

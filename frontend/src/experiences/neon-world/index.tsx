@@ -62,6 +62,7 @@ export default function NeonWorld({ k }: ExperienceProps) {
             {step === 'results' && (
               <>
                 <div className="nw-label">RESULTADOS · {term}</div>
+                <button type="button" className="nw-ghost" onClick={() => { k.setStep('ask'); }} style={{ alignSelf: 'flex-start', margin: '4px 0 10px' }}>← Buscar otra canción</button>
                 {sorted.length === 0 && !google.query && <div className="nw-panel">Sin coincidencias. Reintenta con otro término.</div>}
                 <ul className="nw-list">
                   {sorted.map((s) => (

@@ -56,6 +56,7 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
       {step === 'results' && (
         <>
           <h3 className="gv-h">Resultados para «{term}»</h3>
+          <button type="button" className="gv-ghost" onClick={() => { k.setStep('ask'); }} style={{ alignSelf: 'flex-start', margin: '4px 0 10px' }}>← Buscar otra canción</button>
           {sorted.length === 0 && !google.query && <p className="gv-note">No encontré nada. Prueba con otro nombre o con el artista.</p>}
           <ul className="gv-list">
             {sorted.map((s) => (
