@@ -191,7 +191,7 @@ export default function LatinCollage({ k }: ExperienceProps) {
 
       {step === 'adding' && (
         <div className="lc-over" role="status">
-          <div className="lc-vinyl" />
+          <div className="lc-vinyl" style={state.business.logoUrl ? { background: `#111 url(${state.business.logoUrl}) center / 40% no-repeat` } : undefined} />
           <p>{LOADING_LINES[k.lineIdx % LOADING_LINES.length]}</p>
           {picked && <small>{picked.song.title}</small>}
         </div>

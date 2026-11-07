@@ -72,7 +72,9 @@ model Business {
   id                String         @id @default(cuid())
   name              String
   slug              String         @unique
-  logoUrl           String?
+  // Logo del local (data URL, reducido en el navegador)
+  logoUrl           String?        @db.Text
+  logoAt            DateTime?
   // WhatsApp de contacto y plan elegido al registrarse (STANDARD | CUSTOM)
   phone             String?
   plan              String?

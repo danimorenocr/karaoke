@@ -34,7 +34,7 @@ class StatusDto {
 }
 class UpdateBusinessDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) name?: string;
-  @IsOptional() @IsString() @MaxLength(500) logoUrl?: string;
+  @IsOptional() @IsString() @MaxLength(1_500_000) @Matches(/^data:image\/(png|jpe?g|webp);base64,/) logoUrl?: string | null;
   @IsOptional() @IsHexColor() primaryColor?: string;
   // Imagen (data URL) o null para quitarla
   @IsOptional() @IsString() @MaxLength(3_000_000) @Matches(/^data:image\/(png|jpe?g|webp);base64,/) tvBanner?: string | null;
@@ -167,6 +167,7 @@ class AdminService {
 
   updateBusiness(businessId: string, dto: UpdateBusinessDto) {
     const data: any = { ...dto };
+    if ('logoUrl' in dto) data.logoAt = dto.logoUrl ? new Date() : null;
     if ('tvBanner' in dto) data.tvBannerAt = dto.tvBanner ? new Date() : null;
     return this.prisma.business.update({ where: { id: businessId }, data });
   }

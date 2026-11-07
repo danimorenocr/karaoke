@@ -51,6 +51,7 @@ export default function Tv() {
   const claimRef = useRef<() => void>(() => {});
   const stateRef = useRef<any>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [logo, setLogo] = useState<string | null>(null);
   const [hold, setHold] = useState(false); // pausa entre canciones: aviso en pantalla mientras se pasan los microfonos
   const holdRef = useRef(false);
   const [bar, setBar] = useState<{ start: number; ms: number } | null>(null); // barra de carga del aviso entre canciones
@@ -270,6 +271,12 @@ export default function Tv() {
     api('GET', '/player/banner').then((r) => setBanner(r.banner ?? null)).catch(() => {});
   }, [bannerAt]);
 
+  const logoAt = state?.business?.logoAt ?? null;
+  useEffect(() => {
+    if (!logoAt) { setLogo(null); return; }
+    api('GET', '/player/logo').then((r) => setLogo(r.logo ?? null)).catch(() => {});
+  }, [logoAt]);
+
   const cur = state?.current;
   const noSession = state && !state.session;
   const idle = !cur;
@@ -324,13 +331,20 @@ export default function Tv() {
             className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-black transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
           >
             <img key={transition ? (bar?.start ?? cur?.id) : 'off'} src={banner} alt="" className={`h-full w-full object-contain ${transition ? 'tv-banner-anim' : ''}`} />
+            {logo && (
+              <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-8 pb-10 pt-24 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
+                <img src={logo} alt="" className="h-20 w-auto max-w-[40vw] object-contain md:h-28" draggable={false} />
+                <div className="text-4xl font-black md:text-6xl" style={{ color: '#f5ecdc' }}>{state?.business?.name ?? ''}</div>
+                {cur && <div className="text-xl font-bold uppercase tracking-[0.25em] text-[#a9b8ff] md:text-3xl">{cur.auto ? 'Sigue la música' : `Sigue ${cur.tableName}`}</div>}
+              </div>
+            )}
           </div>
         )}
 
         {(!armed || idle || blocked || fallbackInterlude) && (
           <div className="tv-idle absolute inset-0 z-10 flex flex-col items-center justify-center gap-7 overflow-hidden bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
             <div className="tv-glow pointer-events-none absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#a9b8ff33,transparent 65%)' }} />
-            <img src="/logo.png" alt="TONO" className="relative h-28 w-auto md:h-40" draggable={false} />
+            <img src={logo ?? '/logo.png'} alt={state?.business?.name ?? 'TONO'} className="relative h-28 w-auto max-w-[60vw] object-contain md:h-40" draggable={false} />
             <div className="relative text-6xl font-black tracking-tight md:text-8xl" style={{ color: '#f5ecdc' }}>{state?.business?.name ?? 'Karaoke'}</div>
             {err && <div className="relative rounded-2xl border border-red-400/30 bg-red-500/15 px-6 py-3 text-xl text-red-200">{err}</div>}
             {noSession ? (
@@ -366,6 +380,14 @@ export default function Tv() {
         )}
       </div>
 
+      {/* Logo del local en las esquinas */}
+      {logo && (
+        <>
+          <img src={logo} alt="" className="pointer-events-none absolute left-3 top-3 z-[30] h-14 w-auto max-w-[14vw] object-contain opacity-80 md:h-20" draggable={false} />
+          <img src={logo} alt="" className="pointer-events-none absolute right-3 top-3 z-[30] h-14 w-auto max-w-[14vw] object-contain opacity-80 md:h-20" draggable={false} />
+        </>
+      )}
+
       {/* Barra de carga del aviso entre canciones */}
       {bar && transition && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[40] h-2 bg-white/15" aria-hidden>
@@ -375,7 +397,7 @@ export default function Tv() {
 
       {/* Franja superior sobre el video (no tapa los controles de abajo) */}
       {cur && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-6 bg-gradient-to-b from-black/80 to-transparent px-8 pb-10 pt-4">
+        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-6 bg-gradient-to-b from-black/80 to-transparent pb-10 pt-4 ${logo ? "px-28 md:px-40" : "px-8"}`}>
           <div className="min-w-0">
             <div className="truncate text-2xl font-bold drop-shadow">{cur.title}</div>
             <div className="text-lg text-[#a9b8ff]">{cur.tableName}</div>
@@ -386,7 +408,7 @@ export default function Tv() {
           </div>
         </div>
       )}
-      <div className="pointer-events-none absolute right-4 top-4 z-30 flex gap-2">
+      <div className="pointer-events-none absolute right-4 top-24 z-30 flex gap-2">
         {!online && <div className="rounded bg-red-700 px-3 py-1 text-sm">Sin conexion</div>}
         {state?.session?.paused && <div className="rounded bg-amber-600 px-3 py-1 text-sm">En pausa</div>}
       </div>

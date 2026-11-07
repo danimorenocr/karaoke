@@ -81,6 +81,7 @@ class PlayerController {
 
   @Get('state') state(@CurrentUser() u: AuthUser) { return this.q.playerState(biz(u)); }
   @Get('banner') banner(@CurrentUser() u: AuthUser) { return this.q.tvBanner(biz(u)); }
+  @Get('logo') logo(@CurrentUser() u: AuthUser) { return this.q.tvLogo(biz(u)); }
   @Post('heartbeat') heartbeat(@CurrentUser() u: AuthUser, @Body() b: HeartbeatDto) { return this.q.playerHeartbeat(biz(u), b.requestId, b.positionSec); }
   @Post('next') next(@CurrentUser() u: AuthUser) { return this.q.playerNext(biz(u)); }
   @Post('ended') ended(@CurrentUser() u: AuthUser, @Body() b: RequestRefDto) { return this.q.playerEnded(biz(u), b.requestId); }

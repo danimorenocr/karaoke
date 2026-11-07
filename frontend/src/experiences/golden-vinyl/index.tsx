@@ -9,11 +9,11 @@ import ConfirmSheet from '../../core/ConfirmSheet';
 /** Experiencia "Golden Vinyl": un tocadiscos dorado. Una pantalla con el vinilo y tres pestañas. */
 type Tab = 'pedir' | 'cola' | 'mias';
 
-function Vinyl({ cover, spinning, size = 220 }: { cover?: string | null; spinning: boolean; size?: number }) {
+function Vinyl({ cover, spinning, size = 220, isLogo }: { isLogo?: boolean; cover?: string | null; spinning: boolean; size?: number }) {
   return (
     <div className="gv-vinyl-wrap" style={{ width: size, height: size }}>
       <div className={`gv-vinyl ${spinning ? 'is-spinning' : ''}`}>
-        <div className="gv-label" style={cover ? { backgroundImage: `url(${cover})` } : undefined}><i /></div>
+        <div className="gv-label" style={cover ? { backgroundImage: `url(${cover})`, ...(isLogo ? { backgroundSize: '78%', backgroundRepeat: 'no-repeat', backgroundColor: '#f4ead6' } : {}) } : undefined}><i /></div>
       </div>
       <div className={`gv-arm ${spinning ? 'is-on' : ''}`} />
     </div>
@@ -23,6 +23,7 @@ function Vinyl({ cover, spinning, size = 220 }: { cover?: string | null; spinnin
 export default function GoldenVinyl({ k }: ExperienceProps) {
   const { state, mine, holding, full, blocked, sorted, step, term, picked, google } = k;
   const [tab, setTab] = useState<Tab>('pedir');
+  const logo: string | null = state?.business?.logoUrl ?? null;
 
   useEffect(() => {
     const prev = document.body.style.background;
@@ -35,7 +36,7 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
 
   const pedir = (
     <section className="gv-section">
-      <Vinyl cover={current?.thumbnail} spinning={!!current} />
+      <Vinyl isLogo={!!logo} cover={logo ?? current?.thumbnail} spinning={!!current} />
       <p className="gv-now">
         {current ? <><span>Girando ahora</span><b>{current.title}</b><em>{current.tableName}</em></> : <><span>El disco está en pausa</span><b>Elige la próxima canción</b></>}
       </p>
@@ -115,7 +116,7 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
       <h2 className="gv-title">La bandeja</h2>
       {current && (
         <div className="gv-playing">
-          <Vinyl cover={current.thumbnail} spinning size={92} />
+          <Vinyl isLogo={!!logo} cover={logo ?? current.thumbnail} spinning size={92} />
           <div><small>Sonando</small><b>{current.title}</b><em>{current.tableName}</em></div>
         </div>
       )}
@@ -173,7 +174,7 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
       </nav>
       {step === 'adding' && (
         <div className="gv-overlay" role="status">
-          <Vinyl cover={picked?.song.thumbnail} spinning size={180} />
+          <Vinyl isLogo={!!logo} cover={logo ?? picked?.song.thumbnail} spinning size={180} />
           <p>{LOADING_LINES[k.lineIdx % LOADING_LINES.length]}</p>
         </div>
       )}

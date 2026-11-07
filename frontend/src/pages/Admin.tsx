@@ -529,20 +529,59 @@ function resizeBanner(file: File): Promise<string> {
   });
 }
 
+/** Reduce el logo (max 384 px, PNG con transparencia). */
+function resizeLogo(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 384 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k));
+      c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen')); };
+    img.src = url;
+  });
+}
+
 function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
   const [banner, setBanner] = useState<string | null>(biz.tvBanner ?? null);
+  const [logo, setLogo] = useState<string | null>(biz.logoUrl ?? null);
+  const [logoDirty, setLogoDirty] = useState(false);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, logoUrl: biz.logoUrl ?? '', primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
+  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, logoUrl: f.logoUrl || undefined, maxPendingPerTable: Number(f.maxPendingPerTable), tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, ...(logoDirty ? { logoUrl: logo } : {}), maxPendingPerTable: Number(f.maxPendingPerTable), tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
           <Field label="Nombre" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
-          <Field label="URL del logo (opcional)" placeholder="https://..." value={f.logoUrl} onChange={(e) => setF({ ...f, logoUrl: e.target.value })} />
+          <div className="grid gap-1.5 text-sm">
+            <span className="font-medium text-slate-300">Logo del local (opcional)</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-xl border border-white/10 bg-black">
+                {logo ? <img src={logo} alt="Logo" className="h-full w-full object-contain" /> : <span className="px-1 text-center text-[10px] text-slate-500">Sin logo</span>}
+              </div>
+              <label className="cursor-pointer rounded-xl bg-white/10 px-4 py-2 font-semibold hover:bg-white/15">
+                {logo ? 'Cambiar logo' : 'Subir logo'}
+                <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  try { setLogo(await resizeLogo(file)); setLogoDirty(true); setBannerErr(''); } catch (err: any) { setBannerErr(err.message); }
+                }} />
+              </label>
+              {logo && <Btn type="button" kind="danger" onClick={() => { setLogo(null); setLogoDirty(true); }}>Quitar</Btn>}
+            </div>
+            <span className="text-xs text-slate-500">Se muestra en las esquinas de la TV, en el aviso entre canciones y en el centro del vinilo de los clientes.{logoDirty ? ' Pulsa «Guardar cambios» para aplicarlo.' : ''}</span>
+          </div>
           <label className="grid gap-1.5 text-sm">
             <span className="font-medium text-slate-300">Color principal</span>
             <div className="flex items-center gap-3">

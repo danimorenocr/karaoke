@@ -1,0 +1,2 @@
+ALTER TABLE "Business" ALTER COLUMN "logoUrl" TYPE TEXT;
+ALTER TABLE "Business" ADD COLUMN "logoAt" TIMESTAMP(3);

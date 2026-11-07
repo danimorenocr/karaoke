@@ -217,7 +217,7 @@ export class QueueService {
     const tvConnected = this.rt.tvCount(businessId) > 0 || (!!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000);
     // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
     const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
-    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode, autoDjMode: business.autoDjMode, autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: business.tvBannerAt, tvInterludeSec: business.tvInterludeSec }, tvConnected, tvArmed };
+    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode, autoDjMode: business.autoDjMode, autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: business.tvBannerAt, logoAt: business.logoAt, tvInterludeSec: business.tvInterludeSec }, tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], autoQueue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -271,6 +271,11 @@ export class QueueService {
   async tvBanner(businessId: string) {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { tvBanner: true } });
     return { banner: b.tvBanner };
+  }
+
+  async tvLogo(businessId: string) {
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { logoUrl: true } });
+    return { logo: b.logoUrl };
   }
 
   async publicState(tableToken: string) {
