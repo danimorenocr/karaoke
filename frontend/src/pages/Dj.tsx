@@ -204,12 +204,14 @@ export default function Dj() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {session ? (
             <>
+              {(s.business.features ?? ['autoDj']).includes('autoDj') && (
               <Btn
                 kind={s.business.autoDjMode === 'AUTO' ? 'accent' : undefined}
                 onClick={() => act('PATCH', '/dj/autodj', { mode: s.business.autoDjMode === 'AUTO' ? 'OFF' : 'AUTO' })}
               >
                 {s.business.autoDjMode === 'AUTO' ? 'Auto-DJ: activado' : 'Auto-DJ: apagado'}
               </Btn>
+              )}
               <Btn onClick={() => act('PATCH', '/dj/session/requests-open', { value: !session.requestsOpen })}>
                 {session.requestsOpen ? 'Bloquear solicitudes' : 'Abrir solicitudes'}
               </Btn>

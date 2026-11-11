@@ -1,6 +1,6 @@
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { cop, PLANS, WA_CONTACT, waLink } from '../landing/config';
+import { cop, usePlans, WA_CONTACT, waLink } from '../landing/config';
 
 const C = { bg: '#05060a', card: '#0d1017', line: 'rgba(255,255,255,.09)', cream: '#f5ecdc', mute: '#9aa3b2', ac: '#a9b8ff', ink: '#0b1030' };
 
@@ -91,11 +91,11 @@ const WITH = [['Cada pedido queda en la cola.', 'Directo desde el celular de la 
 const STEPS = [['Escanea el QR', 'Cada mesa tiene el suyo. No se descarga nada.'], ['Elige su canción', 'Karaoke u original, desde YouTube o con enlace.'], ['Entra a la cola', 'Con turnos y cupo por mesa.'], ['Suena en la TV', 'El DJ aprueba, salta o pausa desde su panel.']];
 const FEATURES = [['QR por mesa', 'Cada mesa pide desde su propio código.'], ['Cola automática', 'La app decide qué suena y en qué orden.'], ['Pantalla sola', 'La TV reproduce sin que nadie esté pendiente.'], ['Panel del DJ', 'Aprobar, saltar, pausar o cancelar en vivo.'], ['Cupo por mesa', 'Ninguna mesa acapara la noche.'], ['Estadísticas', 'Qué se pide y cómo rinde cada noche.']];
 const FEAT_ICON = ['M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h3v3h-3zM20 14v6h-3', 'M4 6h16M4 12h16M4 18h10', 'M3 6h18v12H3zM8 21h8', 'M3 14a9 9 0 0118 0M3 14v3a2 2 0 002 2h1v-6H5a2 2 0 00-2 1zM21 14v3a2 2 0 01-2 2h-1v-6h1a2 2 0 012 1z', 'M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4', 'M5 21V11M12 21V4M19 21v-7'];
-const PLAN_ITEMS: Record<string, string[]> = { STANDARD: ['QR por mesa', 'Cola con turnos y cupo', 'Pantalla y panel del DJ', 'Estadísticas'], CUSTOM: ['Todo lo del plan Estándar', 'Apariencia con la identidad de tu local'] };
 const FAQ = [['¿Mis clientes tienen que descargar algo?', 'No. Escanean el QR y listo.'], ['¿Qué necesita mi local?', 'Una pantalla o TV con internet para abrir la pantalla de Tono, y un celular o computador para el panel del DJ.'], ['¿Tono cobra por canciones o maneja derechos?', 'Tono es la herramienta de pedidos y cola. Los videos se reproducen desde YouTube; los permisos de uso musical de tu local siguen siendo tu responsabilidad.'], ['¿Sirve para más de un local?', 'Sí. Cada establecimiento tiene su cuenta, sus mesas y su panel. Escríbenos si tienes varios locales.'], ['¿Y si dos mesas piden la misma canción?', 'Entran las dos a la cola, en el orden en que llegaron. El DJ puede ajustar el orden.']];
 const VENUES = ['Karaokes', 'Bares', 'Gastrobares', 'Restaurantes', 'Discotecas', 'Eventos'];
 
 export default function Landing() {
+  const PLANS = usePlans();
   const [open, setOpen] = useState(0);
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -224,16 +224,16 @@ export default function Landing() {
         {/* Precios (centrados) */}
         <section id="precios" className="mx-auto max-w-5xl scroll-mt-16 px-5 py-20 text-center">
           <Rv><Eyebrow>Precios</Eyebrow><h2 className="mx-auto mt-3 max-w-xl text-3xl font-black leading-[1.1] tracking-tight sm:text-5xl" style={{ color: C.cream }}>Un precio claro, cada mes.</h2></Rv>
-          <div className="mx-auto mt-12 grid max-w-3xl gap-5 text-left sm:grid-cols-2">
+          <div className={`mx-auto mt-12 grid gap-5 text-left sm:grid-cols-2 ${PLANS.length > 2 ? "max-w-5xl lg:grid-cols-3" : "max-w-3xl"}`}>
             {PLANS.map((p, i) => {
-              const hi = p.id === 'CUSTOM';
+              const hi = !!p.highlight;
               return (
                 <Rv key={p.id} d={i * 0.15} className="h-full"><div className="ld-lift relative flex h-full flex-col rounded-2xl border p-7" style={{ background: hi ? 'linear-gradient(160deg,#0f1a36,#0a1022)' : C.card, borderColor: hi ? `${C.ac}66` : C.line, boxShadow: hi ? `0 24px 70px -30px ${C.ac}77` : undefined }}>
-                  {hi && <span className="absolute -top-3 left-6 rounded-full px-3 py-1 text-[10px] font-extrabold" style={{ background: '#1d2a4f', color: C.ac, border: `1px solid ${C.ac}55` }}>A la medida</span>}
+                  {p.badge && <span className="absolute -top-3 left-6 rounded-full px-3 py-1 text-[10px] font-extrabold" style={{ background: '#1d2a4f', color: C.ac, border: `1px solid ${C.ac}55` }}>{p.badge}</span>}
                   <b>{p.name}</b>
                   <div className="mt-4"><span className="text-5xl font-black">{cop(p.price)}</span> <small style={{ color: C.mute }}>COP / mes</small></div>
-                  <ul className="mt-6 flex-1 space-y-2.5 text-sm">{PLAN_ITEMS[p.id].map((x) => <li key={x} className="flex items-start gap-2.5"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full" style={{ background: `${C.ac}22`, color: C.ac }}><Ico n="check" className="h-3 w-3" sw={3} /></span>{x}</li>)}</ul>
-                  <div className="mt-7 flex"><Cta ghost={!hi} to={`/login?registro&plan=${hi ? 'custom' : 'estandar'}`}><span className="w-full text-center">Quiero este plan</span></Cta></div>
+                  <ul className="mt-6 flex-1 space-y-2.5 text-sm">{p.features.map((x) => <li key={x} className="flex items-start gap-2.5"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full" style={{ background: `${C.ac}22`, color: C.ac }}><Ico n="check" className="h-3 w-3" sw={3} /></span>{x}</li>)}</ul>
+                  <div className="mt-7 flex"><Cta ghost={!hi} to={`/login?registro&plan=${encodeURIComponent(p.id)}`}><span className="w-full text-center">Quiero este plan</span></Cta></div>
                 </div></Rv>
               );
             })}

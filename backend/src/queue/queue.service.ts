@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { allowedExperiences } from '../experiences';
 import { RealtimeService } from '../realtime/realtime.gateway';
 import { EventsService } from '../stats/events.service';
+import { PlansService } from '../plans/plans.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -27,6 +28,7 @@ export const AUTO_DJ_GENRES = [
   'Urbano', 'Electrónica', 'Años 80', 'Años 90',
 ];
 const GENRE_QUERIES = ['éxitos', 'las mejores canciones', 'clásicos', 'canciones más populares', 'hits'];
+const DEFAULT_COLOR = '#ec4899';
 const ytThumb = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED'];
 
@@ -37,7 +39,7 @@ const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED
  */
 @Injectable()
 export class QueueService {
-  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService) {}
+  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService) {}
 
   // ---------- helpers ----------
 
@@ -85,7 +87,7 @@ export class QueueService {
   /** Auto-DJ activo: mantiene ya elegidas las proximas canciones normales (cola automatica), separadas de las solicitudes. */
   private async topUpAuto(tx: Tx, businessId: string, sessionId: string, want = 3) {
     const biz = await tx.business.findUniqueOrThrow({ where: { id: businessId }, select: { autoDjMode: true, autoDjGenres: true } });
-    if (biz.autoDjMode !== 'AUTO') return;
+    if (biz.autoDjMode !== 'AUTO' || !(await this.plans.has(businessId, 'autoDj'))) return;
     const have = await tx.songRequest.count({ where: { sessionId, status: 'APPROVED', auto: true } });
     for (let i = have; i < want; i++) {
       const song = await this.pickAuto(tx, businessId, biz.autoDjGenres).catch(() => null);
@@ -170,7 +172,8 @@ export class QueueService {
   }
 
   /** El DJ activa/desactiva el Auto-DJ y/o cambia sus generos; la cola automatica se rehace con lo nuevo. */
-  setAutoDj(businessId: string, mode?: AutoDjMode, genres?: string[]) {
+  async setAutoDj(businessId: string, mode?: AutoDjMode, genres?: string[]) {
+    await this.plans.require(businessId, 'autoDj');
     return this.locked(businessId, async (tx) => {
       const data: Prisma.BusinessUpdateInput = {};
       if (mode) data.autoDjMode = mode;
@@ -217,7 +220,8 @@ export class QueueService {
     const tvConnected = this.rt.tvCount(businessId) > 0 || (!!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000);
     // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
     const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
-    const base = { business: { name: business.name, autoApprove: business.autoApprove, searchMode: business.searchMode, autoDjMode: business.autoDjMode, autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: business.tvBannerAt, logoAt: business.logoAt, tvInterludeSec: business.tvInterludeSec }, tvConnected, tvArmed };
+    const f = await this.plans.of(businessId);
+    const base = { business: { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') ? business.tvBannerAt : null, logoAt: f.has('branding') ? business.logoAt : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec : 0), voteMode: business.voteMode && f.has('voting'), features: [...f] }, tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], autoQueue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -259,7 +263,9 @@ export class QueueService {
   /** Estado para la TV: lo minimo para reproducir. */
   async playerState(businessId: string) {
     const s = await this.djState(businessId);
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { id: true, voteMode: true, voteSec: true } });
     return {
+      vote: await this.lastVote(b, await this.plans.of(businessId)),
       business: s.business,
       session: s.session,
       current: s.current,
@@ -270,12 +276,12 @@ export class QueueService {
 
   async tvBanner(businessId: string) {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { tvBanner: true } });
-    return { banner: b.tvBanner };
+    return { banner: (await this.plans.has(businessId, 'tvBanner')) ? b.tvBanner : null };
   }
 
   async tvLogo(businessId: string) {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { logoUrl: true } });
-    return { logo: b.logoUrl };
+    return { logo: (await this.plans.has(businessId, 'branding')) ? b.logoUrl : null };
   }
 
   async publicState(tableToken: string) {
@@ -285,14 +291,16 @@ export class QueueService {
     }
     const b = table.business;
     const session = await this.activeSession(this.prisma, b.id);
+    const f = await this.plans.of(b.id);
     const out = {
-      business: { name: b.name, logoUrl: b.logoUrl, primaryColor: b.primaryColor, searchMode: b.searchMode },
-      table: { name: table.name, experienceId: allowedExperiences(b.allowedExperiences).includes(table.experienceId) ? table.experienceId : 'classic' },
+      business: { name: b.name, logoUrl: f.has('branding') ? b.logoUrl : null, primaryColor: f.has('branding') ? b.primaryColor : DEFAULT_COLOR, searchMode: f.has('searchAny') ? b.searchMode : 'KARAOKE' },
+      table: { name: table.name, experienceId: f.has('designs') && allowedExperiences(b.allowedExperiences).includes(table.experienceId) ? table.experienceId : 'classic' },
       session: session ? { open: session.requestsOpen } : null,
       maxPending: b.maxPendingPerTable,
       current: null as any,
       queue: [] as any[],
       mine: [] as any[],
+      vote: await this.lastVote(b, f, table.id),
     };
     if (!session) return out;
     const include = { table: { select: { name: true } } };
@@ -312,6 +320,49 @@ export class QueueService {
     out.queue = queue.map((r) => this.view(r));
     out.mine = mine.map((r) => this.view(r));
     return out;
+  }
+
+  // ---------- votacion ----------
+
+  /** Ventana en la que se puede votar una cancion tras terminar: lo que dura el aviso de la TV mas un margen. */
+  private voteWindowMs(voteSec: number) {
+    return (voteSec + 40) * 1000;
+  }
+
+  /** Resultado de la votacion de la ultima cancion terminada, mientras siga abierta (null si el modo esta apagado o no hay). */
+  async lastVote(b: { id: string; voteMode: boolean; voteSec: number }, feats: Set<string>, tableId?: string) {
+    if (!b.voteMode || !feats.has('voting')) return null;
+    const r = await this.prisma.songRequest.findFirst({
+      where: { businessId: b.id, status: 'COMPLETED', completedAt: { gte: new Date(Date.now() - this.voteWindowMs(b.voteSec)) } },
+      orderBy: { completedAt: 'desc' },
+      include: { table: { select: { name: true } } },
+    });
+    if (!r) return null;
+    const groups = await this.prisma.songVote.groupBy({ by: ['rating'], where: { requestId: r.id }, _count: { _all: true } });
+    const dist = [1, 2, 3, 4, 5].map((n) => groups.find((g) => g.rating === n)?._count._all ?? 0);
+    const count = dist.reduce((a, c) => a + c, 0);
+    const avg = count ? Math.round((dist.reduce((a, c, i) => a + c * (i + 1), 0) / count) * 10) / 10 : null;
+    return { id: r.id, title: r.title, tableName: r.auto || !r.table ? null : r.table.name, auto: r.auto, mine: !!tableId && r.tableId === tableId, count, avg, dist };
+  }
+
+  /** Un asistente vota (1-5) la cancion que acaba de sonar. Un voto por navegador: votar de nuevo lo cambia. */
+  async castVote(tableToken: string, requestId: string, rating: number, clientId: string) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
+    if (!table || !table.active || table.business.status !== 'ACTIVE') throw new ForbiddenException('Este codigo QR no es valido');
+    const b = table.business;
+    if (!b.voteMode || !(await this.plans.has(b.id, 'voting'))) throw new ConflictException('La votacion no esta activa');
+    const r = await this.prisma.songRequest.findFirst({ where: { id: requestId, businessId: b.id } });
+    if (!r || r.status !== 'COMPLETED' || !r.completedAt || Date.now() - r.completedAt.getTime() > this.voteWindowMs(b.voteSec)) {
+      throw new ConflictException('La votacion de esta cancion ya cerro');
+    }
+    if (r.tableId === table.id) throw new ForbiddenException('No puedes votar la cancion de tu propia mesa');
+    await this.prisma.songVote.upsert({
+      where: { requestId_clientId: { requestId, clientId } },
+      create: { businessId: b.id, requestId, clientId, rating },
+      update: { rating },
+    });
+    this.rt.queueUpdated(b.id);
+    return { ok: true };
   }
 
   // ---------- sesion ----------
@@ -364,6 +415,7 @@ export class QueueService {
     const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new ForbiddenException('Este codigo QR no es valido');
     const business = table.business;
+    const autoApprove = business.autoApprove && (await this.plans.has(business.id, 'autoApprove'));
 
     return this.locked(business.id, async (tx) => {
       const session = await this.activeSession(tx, business.id);
@@ -395,16 +447,16 @@ export class QueueService {
           thumbnail: input.thumbnail?.slice(0, 500),
           durationSec: input.durationSec,
           position: (last._max.position ?? 0) + 1,
-          status: business.autoApprove ? 'APPROVED' : 'PENDING',
-          approvedAt: business.autoApprove ? new Date() : null,
+          status: autoApprove ? 'APPROVED' : 'PENDING',
+          approvedAt: autoApprove ? new Date() : null,
         },
         include: { table: { select: { name: true } } },
       });
       this.events.record({
         businessId: business.id, sessionId: session.id, tableId: table.id, type: 'REQUEST_CREATED',
-        metadata: { requestId: created.id, videoId: input.videoId, title: created.title, channel: created.channel, source: 'client', clientId: input.clientId, autoApproved: business.autoApprove },
+        metadata: { requestId: created.id, videoId: input.videoId, title: created.title, channel: created.channel, source: 'client', clientId: input.clientId, autoApproved: autoApprove },
       });
-      if (business.autoApprove) {
+      if (autoApprove) {
         this.events.record({ businessId: business.id, sessionId: session.id, tableId: table.id, type: 'REQUEST_APPROVED', metadata: { requestId: created.id, auto: true } });
         await this.promote(tx, session.id);
       }

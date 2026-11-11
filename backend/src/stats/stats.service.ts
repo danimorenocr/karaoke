@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-export type Range = 'today' | '7d' | '30d';
+export type Range = 'today' | 'yesterday' | 'day' | '7d' | '30d';
 const DAY = 86_400_000;
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -31,30 +31,40 @@ export class StatsService {
 
   /** `tzOffsetMin` = new Date().getTimezoneOffset() del navegador (Colombia: 300). */
   /** `businessId` indefinido = todos los establecimientos (super admin). */
-  async compute(businessId: string | undefined, range: Range, tzOffsetMin: number) {
+  async compute(businessId: string | undefined, range: Range, tzOffsetMin: number, day?: string) {
     const now = Date.now();
     const localNow = now - tzOffsetMin * 60_000;
     const localMidnight = Math.floor(localNow / DAY) * DAY;
     const startOfToday = localMidnight + tzOffsetMin * 60_000;
 
-    const span = range === 'today' ? null : range === '7d' ? 7 : 30;
-    const from = new Date(span ? startOfToday - (span - 1) * DAY : startOfToday);
-    // Comparacion: hoy vs el mismo dia de la semana anterior; 7d/30d vs el periodo anterior de igual largo
-    const prevFrom = new Date(span ? from.getTime() - span * DAY : startOfToday - 7 * DAY);
-    const prevTo = new Date(span ? from.getTime() : startOfToday - 7 * DAY + DAY);
+    // Dia suelto: ayer, o una fecha (YYYY-MM-DD) elegida en el calendario. Si la fecha no es valida se usa hoy.
+    let dayStart: number | null = null;
+    if (range === 'yesterday') dayStart = startOfToday - DAY;
+    else if (range === 'day') {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? '');
+      if (m) dayStart = Date.UTC(+m[1], +m[2] - 1, +m[3]) + tzOffsetMin * 60_000;
+    }
+    const single = dayStart !== null || range === 'today';
+    const span = single ? null : range === '7d' ? 7 : 30;
+    const base = dayStart ?? startOfToday;
+    const from = new Date(span ? startOfToday - (span - 1) * DAY : base);
+    const to = single && dayStart !== null ? new Date(base + DAY) : undefined;
+    // Comparacion: un dia vs el mismo dia de la semana anterior; 7d/30d vs el periodo anterior de igual largo
+    const prevFrom = new Date(span ? from.getTime() - span * DAY : base - 7 * DAY);
+    const prevTo = new Date(span ? from.getTime() : base - 7 * DAY + DAY);
 
     const [events, rows, sessions, tablesTotal, prevRequests] = await Promise.all([
       this.prisma.karaokeEvent.findMany({
-        where: { businessId, occurredAt: { gte: from } },
+        where: { businessId, occurredAt: { gte: from, lt: to } },
         select: { type: true, occurredAt: true, sessionId: true, tableId: true, metadata: true },
         orderBy: { occurredAt: 'asc' },
         take: 50_000,
       }),
       this.prisma.songRequest.findMany({
-        where: { businessId, requestedAt: { gte: from } },
+        where: { businessId, requestedAt: { gte: from, lt: to } },
         select: { videoId: true, title: true, channel: true, status: true, requestedAt: true, approvedAt: true, startedAt: true, rejectionReason: true },
       }),
-      this.prisma.karaokeSession.findMany({ where: { businessId, startedAt: { gte: from } }, select: { startedAt: true, endedAt: true } }),
+      this.prisma.karaokeSession.findMany({ where: { businessId, startedAt: { gte: from, lt: to } }, select: { startedAt: true, endedAt: true } }),
       this.prisma.table.count({ where: { businessId, active: true } }),
       this.prisma.songRequest.count({ where: { businessId, requestedAt: { gte: prevFrom, lt: prevTo } } }),
     ]);
@@ -126,6 +136,7 @@ export class StatsService {
     return {
       range,
       from,
+      to,
       comparison: { previousRequests: prevRequests, changePct: prevRequests > 0 ? Math.round(((requests - prevRequests) / prevRequests) * 100) : null },
       participation: {
         requests,

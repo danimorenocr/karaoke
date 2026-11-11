@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { ACCENT, Card, Empty } from './kit';
 
-type Range = 'today' | '7d' | '30d';
-const RANGES: [Range, string][] = [['today', 'Hoy'], ['7d', '7 días'], ['30d', '30 días']];
+type Range = 'today' | 'yesterday' | 'day' | '7d' | '30d';
+const RANGES: [Range, string][] = [['today', 'Hoy'], ['yesterday', 'Ayer'], ['7d', '7 días'], ['30d', '30 días']];
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const secs = (s: number | null | undefined) => {
   if (s === null || s === undefined) return '—';
@@ -74,34 +75,39 @@ function HourChart({ data }: { data: number[] }) {
 /** `path`: endpoint de estadisticas (admin: /admin/stats; super admin: /super/stats/<id|all>). */
 export default function StatsPanel({ path = '/admin/stats' }: { path?: string }) {
   const [range, setRange] = useState<Range>('today');
+  const [day, setDay] = useState('');
   const [s, setS] = useState<any>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let dead = false;
     const load = () =>
-      api('GET', `${path}?range=${range}&tz=${new Date().getTimezoneOffset()}`)
+      api('GET', `${path}?range=${range}&tz=${new Date().getTimezoneOffset()}${range === 'day' ? `&day=${day}` : ''}`)
         .then((d) => !dead && (setS(d), setError('')))
         .catch((e) => !dead && setError(e.message));
     setS(null);
     load();
     const t = setInterval(load, 30_000); // se refresca solo mientras el dueno mira el tablero
     return () => { dead = true; clearInterval(t); };
-  }, [range, path]);
+  }, [range, path, day]);
 
   const p = s?.participation, m = s?.music, o = s?.operations, sat = s?.satisfaction;
   const change = s?.comparison?.changePct;
-  const vs = range === 'today' ? 'mismo día de la semana pasada' : 'periodo anterior';
+  const vs = range === 'today' || range === 'yesterday' || range === 'day' ? 'mismo día de la semana pasada' : 'periodo anterior';
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
         {RANGES.map(([k, label]) => (
-          <button key={k} onClick={() => setRange(k)} className="rounded-full border px-4 py-1.5 text-sm font-semibold"
+          <button key={k} onClick={() => { setRange(k); setDay(''); }} className="rounded-full border px-4 py-1.5 text-sm font-semibold"
             style={range === k ? { background: ACCENT, borderColor: ACCENT, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.15)', color: '#cbd5e1' }}>
             {label}
           </button>
         ))}
+        <label className="flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold" style={range === 'day' ? { background: ACCENT, borderColor: ACCENT, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.15)', color: '#cbd5e1' }}>
+          <span>Fecha</span>
+          <input type="date" value={day} max={ymd(new Date())} onChange={(e) => { if (e.target.value) { setDay(e.target.value); setRange('day'); } }} aria-label="Elegir fecha" className="bg-transparent outline-none [color-scheme:dark]" />
+        </label>
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {!s ? (

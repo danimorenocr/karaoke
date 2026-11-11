@@ -37,6 +37,7 @@ class RequestRefDto {
   @IsOptional() @IsInt() code?: number;
 }
 
+import { PlansService } from '../plans/plans.service';
 const biz = (u: AuthUser) => u.businessId!;
 
 /** Panel DJ (DJ y ADMIN del establecimiento; el businessId siempre sale del token, nunca del cliente). */
@@ -44,12 +45,12 @@ const biz = (u: AuthUser) => u.businessId!;
 @UseGuards(AuthGuard)
 @Roles('DJ', 'ADMIN')
 class DjController {
-  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private plans: PlansService) {}
 
   /** Busqueda del DJ, segun la configuracion del bar (solo karaoke / cualquier musica). */
   @Get('search') async search(@CurrentUser() u: AuthUser, @Query('q') q = '') {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: biz(u) }, select: { searchMode: true, searchProvider: true } });
-    return this.yt.searchSongs(q, b.searchMode, b.searchProvider);
+    return this.yt.searchSongs(q, (await this.plans.has(biz(u), 'searchAny')) ? b.searchMode : 'KARAOKE', b.searchProvider);
   }
   @Post('requests') add(@CurrentUser() u: AuthUser, @Body() d: DjAddDto) {
     const { tableId, ...song } = d;

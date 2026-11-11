@@ -6,20 +6,24 @@ import { YoutubeModule } from '../youtube/youtube.module';
 import { YoutubeService } from '../youtube/youtube.service';
 import { EventsService } from './events.service';
 import { MetricsService } from './metrics.service';
+import { PlansService } from '../plans/plans.service';
 import { Range, StatsService } from './stats.service';
+
+const parseRange = (r: string): Range => (['yesterday', 'day', '7d', '30d'].includes(r) ? (r as Range) : 'today');
 
 /** Estadisticas del establecimiento (dueno). El businessId sale del token, nunca del cliente. */
 @Controller('admin/stats')
 @UseGuards(AuthGuard)
 @Roles('ADMIN')
 class AdminStatsController {
-  constructor(private stats: StatsService) {}
+  constructor(private stats: StatsService, private plans: PlansService) {}
 
   @Get()
-  get(@CurrentUser() u: AuthUser, @Query('range') range = 'today', @Query('tz') tz = '0') {
-    const r: Range = range === '7d' || range === '30d' ? range : 'today';
+  async get(@CurrentUser() u: AuthUser, @Query('range') range = 'today', @Query('tz') tz = '0', @Query('day') day?: string) {
+    await this.plans.require(u.businessId!, 'stats');
+    const r: Range = parseRange(range);
     const offset = Math.max(-840, Math.min(840, Number(tz) || 0));
-    return this.stats.compute(u.businessId!, r, offset);
+    return this.stats.compute(u.businessId!, r, offset, day);
   }
 }
 
@@ -31,10 +35,10 @@ class SuperStatsController {
   constructor(private stats: StatsService) {}
 
   @Get(':businessId')
-  get(@Param('businessId') businessId: string, @Query('range') range = 'today', @Query('tz') tz = '0') {
-    const r: Range = range === '7d' || range === '30d' ? range : 'today';
+  get(@Param('businessId') businessId: string, @Query('range') range = 'today', @Query('tz') tz = '0', @Query('day') day?: string) {
+    const r: Range = parseRange(range);
     const offset = Math.max(-840, Math.min(840, Number(tz) || 0));
-    return this.stats.compute(businessId === 'all' ? undefined : businessId, r, offset);
+    return this.stats.compute(businessId === 'all' ? undefined : businessId, r, offset, day);
   }
 }
 

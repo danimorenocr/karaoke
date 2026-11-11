@@ -34,7 +34,7 @@ class RegisterDto {
   @IsEmail() email: string;
   @IsString() @MinLength(8) @MaxLength(100) password: string;
   @IsString() @Matches(/^\+?[0-9 ()-]{7,18}$/, { message: 'Numero de WhatsApp invalido' }) phone: string;
-  @IsIn(['STANDARD', 'CUSTOM']) plan: string;
+  @IsString() @MaxLength(80) plan: string;
 }
 
 const slugify = (s: string) =>
@@ -74,12 +74,19 @@ class AuthController {
     };
   }
 
+  /** Planes visibles en la landing y el registro. */
+  @Get('plans')
+  plans() {
+    return this.prisma.plan.findMany({ where: { active: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+  }
+
   /** Autoregistro: crea el establecimiento (pendiente de pago) y su cuenta de administrador. */
   @Post('register')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async register(@Body() dto: RegisterDto) {
     const email = dto.email.toLowerCase();
     if (await this.prisma.user.findUnique({ where: { email } })) throw new ConflictException('Ese correo ya esta registrado');
+    if (!(await this.prisma.plan.findFirst({ where: { id: dto.plan, active: true } }))) throw new BadRequestException('Plan no disponible');
     const business = await this.prisma.business.create({
       data: {
         name: dto.businessName.trim(),

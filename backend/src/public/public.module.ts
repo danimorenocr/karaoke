@@ -1,12 +1,13 @@
 import { Body, Controller, Get, Module, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { QueueModule } from '../queue/queue.module';
 import { QueueService } from '../queue/queue.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { YoutubeModule } from '../youtube/youtube.module';
 import { YoutubeService } from '../youtube/youtube.service';
 import { EventsService } from '../stats/events.service';
+import { PlansService } from '../plans/plans.service';
 
 class CreateRequestDto {
   @Matches(/^[\w-]{11}$/, { message: 'videoId invalido' }) videoId: string;
@@ -20,6 +21,11 @@ class CreateRequestDto {
 class ScanDto {
   @IsOptional() @IsString() @MaxLength(40) clientId?: string;
 }
+class VoteDto {
+  @IsString() @MaxLength(40) requestId: string;
+  @IsInt() @Min(1) @Max(5) rating: number;
+  @IsString() @MinLength(6) @MaxLength(40) clientId: string;
+}
 class FeedbackDto {
   @IsInt() @Min(1) @Max(5) rating: number;
   @IsOptional() @IsString() @MaxLength(300) comment?: string;
@@ -29,7 +35,7 @@ class FeedbackDto {
 /** Sin login: la mesa se identifica por el token del QR. */
 @Controller('public/:token')
 class PublicController {
-  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService, private plans: PlansService) {}
 
   @Get('state')
   @Throttle({ default: { limit: 3000, ttl: 60_000 } })
@@ -45,7 +51,9 @@ class PublicController {
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
     this.events.record({ businessId: table.businessId, tableId: table.id, type: 'SEARCH_PERFORMED', metadata: { q: q.trim().toLowerCase().slice(0, 60) } });
     // El comensal elige karaoke o normal; si no manda nada, vale la configuracion del bar
-    const m = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
+    const canAny = await this.plans.has(table.businessId, 'searchAny');
+    const wanted = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
+    const m = canAny ? wanted : 'KARAOKE';
     return this.yt.searchSongs(q, m, table.business.searchProvider);
   }
 
@@ -72,6 +80,13 @@ class PublicController {
       metadata: { rating: dto.rating, comment: dto.comment?.trim() || undefined, clientId: dto.clientId },
     });
     return { ok: true };
+  }
+
+  /** Voto (1-5) a la cancion que acaba de terminar (modo votacion). */
+  @Post('vote')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  vote(@Param('token') token: string, @Body() dto: VoteDto) {
+    return this.q.castVote(token, dto.requestId, dto.rating, dto.clientId);
   }
 
   @Post('requests')

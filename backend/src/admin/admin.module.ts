@@ -6,6 +6,7 @@ import { AuthGuard, AuthUser, CurrentUser, Roles } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.gateway';
 import { allowedExperiences, EXPERIENCE_IDS } from '../experiences';
+import { FEATURE_IDS, FEATURES, PlansService } from '../plans/plans.service';
 
 const newToken = () => randomBytes(9).toString('base64url');
 const slugify = (s: string) =>
@@ -29,6 +30,22 @@ class PaymentDto {
   // Valor recibido en COP; si no se envia se usa el precio mensual del plan
   @IsOptional() @IsInt() @Min(0) @Max(100_000_000) amount?: number;
 }
+class BusinessPlanDto {
+  @IsString() @MaxLength(80) plan: string;
+}
+class PlanDto {
+  @IsArray() @IsIn(FEATURE_IDS, { each: true }) perks: string[];
+  @IsString() @MinLength(2) @MaxLength(60) name: string;
+  @IsInt() @Min(0) @Max(100_000_000) price: number;
+  @IsOptional() @IsString() @MaxLength(200) desc?: string;
+  @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(120, { each: true }) features: string[];
+  @IsOptional() @IsString() @MaxLength(30) badge?: string | null;
+  @IsOptional() @IsBoolean() highlight?: boolean;
+  @IsOptional() @IsBoolean() active?: boolean;
+}
+class TrialDto {
+  @IsInt() @Min(1) @Max(365) days: number;
+}
 class StatusDto {
   @IsBoolean() active: boolean;
 }
@@ -41,6 +58,8 @@ class UpdateBusinessDto {
   @IsOptional() @IsInt() @Min(0) @Max(60) tvInterludeSec?: number;
   @IsOptional() @IsInt() @Min(1) @Max(20) maxPendingPerTable?: number;
   @IsOptional() @IsBoolean() autoApprove?: boolean;
+  @IsOptional() @IsBoolean() voteMode?: boolean;
+  @IsOptional() @IsInt() @Min(5) @Max(60) voteSec?: number;
   @IsOptional() @IsIn(['KARAOKE', 'ANY']) searchMode?: 'KARAOKE' | 'ANY';
 }
 class TableDto {
@@ -71,7 +90,7 @@ class UpdateEmailDto {
 
 @Injectable()
 class AdminService {
-  constructor(private prisma: PrismaService, private rt: RealtimeService) {}
+  constructor(private prisma: PrismaService, private rt: RealtimeService, private plans: PlansService) {}
 
   async createBusiness(dto: CreateBusinessDto) {
     const email = dto.adminEmail.toLowerCase();
@@ -101,10 +120,11 @@ class AdminService {
   /** Registra un pago: activa el establecimiento y le da `days` dias mas (se suman a lo que le quede). 0 = sin vencimiento. */
   async registerPayment(id: string, days: number, amount?: number) {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id }, select: { paidUntil: true, plan: true } });
+    const planRow = b.plan ? await this.prisma.plan.findUnique({ where: { id: b.plan } }) : null;
     const now = new Date();
     const from = b.paidUntil && b.paidUntil > now ? b.paidUntil : now;
     const paidUntil = days === 0 ? null : new Date(from.getTime() + days * 86_400_000);
-    const price = b.plan === 'CUSTOM' ? 49900 : 39900;
+    const price = planRow?.price ?? 39900;
     const [business] = await this.prisma.$transaction([
       this.prisma.business.update({ where: { id }, data: { status: 'ACTIVE', paidUntil } }),
       this.prisma.payment.create({ data: { businessId: id, plan: b.plan, amount: amount ?? price, days, paidUntil } }),
@@ -114,6 +134,70 @@ class AdminService {
 
   listPayments() {
     return this.prisma.payment.findMany({ orderBy: { createdAt: 'desc' }, take: 500, include: { business: { select: { name: true } } } });
+  }
+
+  listPlans() {
+    return this.prisma.plan.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+  }
+
+  private clean(dto: PlanDto) {
+    return {
+      name: dto.name.trim(),
+      price: dto.price,
+      desc: (dto.desc ?? '').trim(),
+      perks: [...new Set(dto.perks)],
+      features: dto.features.map((f) => f.trim()).filter(Boolean),
+      badge: dto.badge?.trim() || null,
+      highlight: dto.highlight ?? false,
+      active: dto.active ?? true,
+    };
+  }
+
+  async createPlan(dto: PlanDto) {
+    const last = await this.prisma.plan.aggregate({ _max: { sortOrder: true } });
+    return this.prisma.plan.create({ data: { id: `${slugify(dto.name)}-${randomBytes(2).toString('hex')}`.toUpperCase(), ...this.clean(dto), sortOrder: (last._max.sortOrder ?? -1) + 1 } });
+  }
+
+  async updatePlan(id: string, dto: PlanDto) {
+    if (!(await this.prisma.plan.findUnique({ where: { id } }))) throw new NotFoundException('Plan no encontrado');
+    const p = await this.prisma.plan.update({ where: { id }, data: this.clean(dto) });
+    await this.afterPlanChange(id);
+    return p;
+  }
+
+  /** Cambia el plan de un establecimiento (puede ser uno oculto al publico). */
+  async setBusinessPlan(id: string, plan: string) {
+    if (!(await this.prisma.plan.findUnique({ where: { id: plan } }))) throw new NotFoundException('Plan no encontrado');
+    const b = await this.prisma.business.update({ where: { id }, data: { plan } });
+    await this.afterPlanChange(undefined, id);
+    return b;
+  }
+
+  /** Refresca los permisos en memoria y avisa a los paneles abiertos de los establecimientos afectados. */
+  private async afterPlanChange(planId?: string, businessId?: string) {
+    this.plans.invalidate();
+    const rows = await this.prisma.business.findMany({ where: businessId ? { id: businessId } : { plan: planId }, select: { id: true } });
+    rows.forEach((r) => this.rt.queueUpdated(r.id));
+  }
+
+  /** Un plan en uso no se borra (los establecimientos guardan su id): se oculta desmarcandolo como activo. */
+  async deletePlan(id: string) {
+    const used = await this.prisma.business.count({ where: { plan: id } });
+    if (used) throw new ConflictException(`${used} establecimiento(s) usan este plan. Desactívalo para ocultarlo en vez de borrarlo.`);
+    await this.prisma.plan.deleteMany({ where: { id } });
+    return { ok: true };
+  }
+
+  /** Prueba gratis: da `days` dias de acceso sin cobrar (queda en el historial con valor $0). */
+  trial(id: string, days: number) {
+    return this.registerPayment(id, days, 0);
+  }
+
+  /** Borra solo el registro del pago: el estado y el vencimiento del establecimiento no cambian (no se suspende). */
+  async deletePayment(id: string) {
+    const r = await this.prisma.payment.deleteMany({ where: { id } });
+    if (!r.count) throw new NotFoundException('Pago no encontrado');
+    return { ok: true };
   }
 
   /** Borra el establecimiento y, en cascada, usuarios, mesas, sesiones, pedidos, eventos y pagos. */
@@ -161,11 +245,20 @@ class AdminService {
   }
 
   // Toda consulta de abajo filtra por businessId (viene del JWT, nunca del cliente).
-  getBusiness(businessId: string) {
-    return this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
+  async getBusiness(businessId: string) {
+    const [b, feats] = await Promise.all([this.prisma.business.findUniqueOrThrow({ where: { id: businessId } }), this.plans.of(businessId)]);
+    return { ...b, features: [...feats] };
   }
 
-  updateBusiness(businessId: string, dto: UpdateBusinessDto) {
+  async updateBusiness(businessId: string, dto: UpdateBusinessDto) {
+    const need: [boolean, (typeof FEATURES)[number]['id']][] = [
+      [dto.logoUrl !== undefined || dto.primaryColor !== undefined, 'branding'],
+      [dto.tvBanner !== undefined || dto.tvInterludeSec !== undefined, 'tvBanner'],
+      [dto.autoApprove === true, 'autoApprove'],
+      [dto.voteMode === true, 'voting'],
+      [dto.searchMode === 'ANY', 'searchAny'],
+    ];
+    for (const [used, f] of need) if (used) await this.plans.require(businessId, f);
     const data: any = { ...dto };
     if ('logoUrl' in dto) data.logoAt = dto.logoUrl ? new Date() : null;
     if ('tvBanner' in dto) data.tvBannerAt = dto.tvBanner ? new Date() : null;
@@ -206,6 +299,7 @@ class AdminService {
 
   async updateTable(businessId: string, id: string, dto: UpdateTableDto) {
     await this.ownedTable(businessId, id);
+    if (dto.experienceId && dto.experienceId !== 'classic') await this.plans.require(businessId, 'designs');
     if (dto.experienceId) {
       const biz = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { allowedExperiences: true } });
       if (!allowedExperiences(biz.allowedExperiences).includes(dto.experienceId)) throw new ForbiddenException('Ese diseno no esta habilitado para tu establecimiento');
@@ -221,7 +315,8 @@ class AdminService {
     return this.prisma.table.update({ where: { id }, data: { qrToken: newToken() } });
   }
 
-  listStaff(businessId: string) {
+  async listStaff(businessId: string) {
+    await this.plans.require(businessId, 'staff');
     return this.prisma.user.findMany({
       where: { businessId },
       select: { id: true, name: true, email: true, role: true, active: true },
@@ -230,6 +325,7 @@ class AdminService {
   }
 
   async createDj(businessId: string, dto: CreateStaffDto) {
+    await this.plans.require(businessId, 'staff');
     const email = dto.email.toLowerCase();
     if (await this.prisma.user.findUnique({ where: { email } })) throw new ConflictException('Ese correo ya esta registrado');
     const u = await this.prisma.user.create({
@@ -245,7 +341,8 @@ class AdminService {
     return { ok: true };
   }
 
-  history(businessId: string) {
+  async history(businessId: string) {
+    await this.plans.require(businessId, 'history');
     return this.prisma.songRequest.findMany({
       where: { businessId },
       orderBy: { requestedAt: 'desc' },
@@ -267,6 +364,14 @@ class SuperController {
   @Patch('businesses/:id/search-provider') provider(@Param('id') id: string, @Body() b: ProviderDto) { return this.s.setSearchProvider(id, b.provider); }
   @Patch('businesses/:id/experiences') experiences(@Param('id') id: string, @Body() b: ExperiencesDto) { return this.s.setExperiences(id, b.ids); }
   @Patch('businesses/:id/payment') payment(@Param('id') id: string, @Body() b: PaymentDto) { return this.s.registerPayment(id, b.days, b.amount); }
+  @Patch('businesses/:id/trial') trial(@Param('id') id: string, @Body() b: TrialDto) { return this.s.trial(id, b.days); }
+  @Delete('payments/:id') removePayment(@Param('id') id: string) { return this.s.deletePayment(id); }
+  @Patch('businesses/:id/plan') businessPlan(@Param('id') id: string, @Body() b: BusinessPlanDto) { return this.s.setBusinessPlan(id, b.plan); }
+  @Get('features') features() { return FEATURES; }
+  @Get('plans') plans() { return this.s.listPlans(); }
+  @Post('plans') addPlan(@Body() b: PlanDto) { return this.s.createPlan(b); }
+  @Patch('plans/:id') editPlan(@Param('id') id: string, @Body() b: PlanDto) { return this.s.updatePlan(id, b); }
+  @Delete('plans/:id') removePlan(@Param('id') id: string) { return this.s.deletePlan(id); }
   @Get('payments') payments() { return this.s.listPayments(); }
   @Delete('businesses/:id') remove(@Param('id') id: string) { return this.s.deleteBusiness(id); }
   @Patch('businesses/:id/status') status(@Param('id') id: string, @Body() b: StatusDto) { return this.s.setBusinessStatus(id, b.active); }

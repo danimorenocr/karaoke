@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, auth, SessionUser } from '../lib/api';
 import { Headphones } from '../components/art';
 import { ACCENT, Brand, Btn, Icon } from '../components/kit';
-import { cop, PAY_HOLDER, PAY_METHODS, PLANS, PlanId, waLink } from '../landing/config';
+import { cop, PAY_HOLDER, PAY_METHODS, PlanId, usePlans, waLink } from '../landing/config';
 
 export const homeFor = (role: SessionUser['role']) => (role === 'SUPER_ADMIN' ? '/super-admin' : role === 'ADMIN' ? '/admin' : '/dj');
 
@@ -13,7 +13,9 @@ export default function Login() {
   const nav = useNavigate();
   const [qs] = useSearchParams();
   const [mode, setMode] = useState<'login' | 'register'>(qs.has('registro') ? 'register' : 'login');
-  const [plan, setPlan] = useState<PlanId>(qs.get('plan') === 'custom' ? 'CUSTOM' : 'STANDARD');
+  const PLANS = usePlans();
+  const [planSel, setPlan] = useState<PlanId>(qs.get('plan') ?? '');
+  const plan = PLANS.some((p) => p.id === planSel) ? planSel : PLANS[0].id;
   const [phone, setPhone] = useState('');
   // Despues de registrarse (o al entrar sin haber pagado) se muestra la pantalla de pago
   // Recuperar contrasena: correo -> codigo OTP + contrasena nueva

@@ -51,26 +51,30 @@ function Health() {
   );
 }
 
-type Tab = 'overview' | 'events' | 'businesses' | 'payments';
+type Tab = 'overview' | 'events' | 'businesses' | 'payments' | 'plans';
 const NAV: NavItem[] = [
   { id: 'overview', label: 'Resumen', icon: 'home' },
   { id: 'events', label: 'Eventos', icon: 'chart' },
   { id: 'businesses', label: 'Establecimientos', icon: 'store' },
   { id: 'payments', label: 'Pagos', icon: 'card' },
+  { id: 'plans', label: 'Planes', icon: 'card' },
 ];
 const HERO: Record<Tab, [string, string]> = {
   overview: ['Resumen', 'Estado general de la plataforma y de todos los establecimientos.'],
   events: ['Eventos', 'Gráficas de actividad de todos los establecimientos o de uno en particular.'],
   businesses: ['Establecimientos', 'Crea, suspende, reactiva o elimina los bares que usan TONO.'],
   payments: ['Pagos', 'Historial de pagos confirmados de todos los establecimientos.'],
+  plans: ['Planes', 'Precios y qué incluye cada plan. Es lo que ven los clientes en la página y al registrarse.'],
 };
 
+const planName = (plans: any[], id?: string | null) => (id ? plans.find((p) => p.id === id)?.name ?? id : '—');
 const money = (n: number) => '$' + n.toLocaleString('es-CO');
 
-function Payments() {
+function Payments({ plans, run, toast }: { plans: any[]; run: (f: () => Promise<void>) => void; toast: (m: string, bad?: boolean) => void }) {
   const [rows, setRows] = useState<any[] | null>(null);
   const [err, setErr] = useState('');
-  useEffect(() => { api('GET', '/super/payments').then(setRows).catch((e) => setErr(e.message)); }, []);
+  const load = useCallback(() => api('GET', '/super/payments').then(setRows).catch((e) => setErr(e.message)), []);
+  useEffect(() => { load(); }, [load]);
   if (err) return <Card><Empty>{err}</Empty></Card>;
   if (!rows) return <Card><Empty>Cargando...</Empty></Card>;
   const total = rows.reduce((n, r) => n + r.amount, 0);
@@ -86,17 +90,27 @@ function Payments() {
       <Card>
         {rows.length === 0 ? <Empty>Aún no hay pagos registrados. Aparecen aquí cuando confirmas un pago.</Empty> : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="text-[11px] uppercase tracking-wider text-slate-400"><tr>{['Fecha', 'Establecimiento', 'Plan', 'Valor', 'Días', 'Pagado hasta'].map((h) => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}</tr></thead>
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="text-[11px] uppercase tracking-wider text-slate-400"><tr>{['Fecha', 'Establecimiento', 'Plan', 'Valor', 'Días', 'Pagado hasta', ''].map((h) => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}</tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t border-white/[0.07]">
                     <td className="px-5 py-3 text-slate-300">{new Date(r.createdAt).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}</td>
                     <td className="px-5 py-3 font-semibold">{r.business?.name ?? '—'}</td>
-                    <td className="px-5 py-3 text-slate-300">{r.plan === 'CUSTOM' ? 'Personalizado' : r.plan === 'STANDARD' ? 'Estándar' : '—'}</td>
-                    <td className="px-5 py-3 font-bold">{money(r.amount)}</td>
+                    <td className="px-5 py-3 text-slate-300">{planName(plans, r.plan)}</td>
+                    <td className="px-5 py-3 font-bold">{r.amount === 0 ? <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-xs font-semibold text-indigo-200">Prueba gratis</span> : money(r.amount)}</td>
                     <td className="px-5 py-3 text-slate-300">{r.days || 'Sin límite'}</td>
                     <td className="px-5 py-3 text-slate-300">{r.paidUntil ? new Date(r.paidUntil).toLocaleDateString('es-CO') : 'Sin vencimiento'}</td>
+                    <td className="px-5 py-3 text-right">
+                      <button
+                        aria-label="Borrar pago"
+                        title="Borrar pago"
+                        onClick={() => confirm(`¿Borrar este pago de ${r.business?.name ?? 'el establecimiento'}?
+
+Solo se quita del historial: el establecimiento NO se suspende ni cambia su vencimiento.`) && run(async () => { await api('DELETE', `/super/payments/${r.id}`); toast('Pago borrado'); await load(); })}
+                        className="rounded-lg p-2 text-red-300/80 transition hover:bg-red-500/10 hover:text-red-300"
+                      ><Icon name="trash" className="h-4 w-4" /></button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -104,6 +118,65 @@ function Payments() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+
+const BLANK_PLAN = { id: '', name: '', price: 39900, desc: '', features: '', badge: '', highlight: false, active: true, perks: [] as string[] };
+
+/** Alta, edicion y baja de los planes que se venden. Un plan en uso solo se puede desactivar. */
+function Plans({ plans, reload, run, toast }: { plans: any[]; reload: () => Promise<void>; run: (f: () => Promise<void>) => void; toast: (m: string, bad?: boolean) => void }) {
+  const [ed, setEd] = useState<typeof BLANK_PLAN | null>(null);
+  const [catalog, setCatalog] = useState<{ id: string; label: string; hint: string }[]>([]);
+  useEffect(() => { api('GET', '/super/features').then(setCatalog).catch(() => {}); }, []);
+  const body = (p: typeof BLANK_PLAN) => ({ name: p.name, price: p.price, desc: p.desc, features: p.features.split('\n').map((x) => x.trim()).filter(Boolean), badge: p.badge.trim() || null, highlight: p.highlight, active: p.active, perks: p.perks });
+  const input = 'w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 outline-none focus:border-white/30';
+  return (
+    <div className="space-y-5">
+      <Btn kind="accent" onClick={() => setEd({ ...BLANK_PLAN, perks: catalog.map((c) => c.id) })}><Icon name="plus" className="mr-1 inline h-4 w-4" />Nuevo plan</Btn>
+      <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
+        {plans.map((p) => (
+          <article key={p.id} className={`rounded-3xl border border-white/10 bg-[#0d1017] p-5 ${p.active ? '' : 'opacity-60'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="truncate text-xl font-extrabold">{p.name}</h3>
+              {!p.active && <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] text-amber-200" title="No aparece en la página ni en el registro, pero se puede asignar a un establecimiento">oculto al público</span>}
+              {p.badge && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px]">{p.badge}</span>}
+            </div>
+            <div className="mt-2 text-3xl font-black">{money(p.price)}<small className="text-xs font-normal text-slate-400"> COP / mes</small></div>
+            {p.desc && <p className="mt-1 text-sm text-slate-400">{p.desc}</p>}
+            <p className="mt-3 text-[11px] uppercase tracking-wider text-slate-400">Funciones ({p.perks.length}/{catalog.length || p.perks.length})</p>
+            <p className="mt-1 text-xs text-slate-300">{catalog.length ? catalog.map((c) => <span key={c.id} className={`mr-1.5 inline-block ${p.perks.includes(c.id) ? '' : 'line-through opacity-40'}`}>{c.label}</span>) : null}</p>
+            <p className="mt-3 text-[11px] uppercase tracking-wider text-slate-400">Texto en la página</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-300">{p.features.map((f: string) => <li key={f}>{f}</li>)}</ul>
+            <div className="mt-4 flex gap-2">
+              <Btn className="flex-1" onClick={() => setEd({ ...p, badge: p.badge ?? '', features: p.features.join('\n') })}>Editar</Btn>
+              <Btn kind="danger" onClick={() => confirm(`¿Borrar el plan ${p.name}?`) && run(async () => { await api('DELETE', `/super/plans/${p.id}`); toast('Plan borrado'); await reload(); })}><Icon name="trash" className="h-4 w-4" /></Btn>
+            </div>
+          </article>
+        ))}
+      </div>
+      {ed && (
+        <Dialog wide title={ed.id ? 'Editar plan' : 'Nuevo plan'} onClose={() => setEd(null)}>
+          <form className="grid gap-4 md:grid-cols-2" onSubmit={(e) => { e.preventDefault(); run(async () => { await (ed.id ? api('PATCH', `/super/plans/${ed.id}`, body(ed)) : api('POST', '/super/plans', body(ed))); setEd(null); toast('Plan guardado'); await reload(); }); }}>
+            <Field label="Nombre" value={ed.name} onChange={(e) => setEd({ ...ed, name: e.target.value })} required minLength={2} autoFocus />
+            <Field label="Precio mensual (COP)" type="number" min={0} value={ed.price} onChange={(e) => setEd({ ...ed, price: Math.max(0, Number(e.target.value) || 0) })} required />
+            <Field label="Descripción corta" value={ed.desc} onChange={(e) => setEd({ ...ed, desc: e.target.value })} />
+            <label className="grid gap-1.5 text-sm md:col-span-2"><span className="text-slate-400">Texto de lo que incluye en la página (uno por línea)</span>
+              <textarea rows={6} className={input} value={ed.features} onChange={(e) => setEd({ ...ed, features: e.target.value })} /></label>
+            <Field label="Etiqueta (opcional, ej. A la medida)" value={ed.badge} onChange={(e) => setEd({ ...ed, badge: e.target.value })} />
+            <fieldset className="grid gap-3 rounded-xl border border-white/10 p-3 sm:grid-cols-2 md:col-span-2">
+              <legend className="px-1 text-sm text-slate-300">Funciones habilitadas en este plan</legend>
+              {catalog.map((c) => (
+                <label key={c.id} className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ed.perks.includes(c.id)} onChange={(e) => setEd({ ...ed, perks: e.target.checked ? [...ed.perks, c.id] : ed.perks.filter((x) => x !== c.id) })} /><span><b className="font-semibold">{c.label}</b><span className="block text-xs text-slate-500">{c.hint}</span></span></label>
+              ))}
+            </fieldset>
+            <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={ed.highlight} onChange={(e) => setEd({ ...ed, highlight: e.target.checked })} />Destacar en la página</label>
+            <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={ed.active} onChange={(e) => setEd({ ...ed, active: e.target.checked })} />Visible al público (aparece en la página y en el registro; oculto igual se puede asignar a un establecimiento)</label>
+            <Btn kind="accent" className="py-3 md:col-span-2">Guardar</Btn>
+          </form>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -160,6 +233,9 @@ export default function SuperAdmin() {
   const { toast, node } = useToast();
   const run = useAction(toast);
 
+  const [plans, setPlans] = useState<any[]>([]);
+  const loadPlans = useCallback(async () => setPlans(await api('GET', '/super/plans')), []);
+  useEffect(() => { loadPlans().catch(() => {}); }, [loadPlans]);
   const load = useCallback(async () => setList(await api('GET', '/super/businesses')), []);
   useEffect(() => { load().catch((e) => toast(e.message, true)); }, [load]);
 
@@ -195,7 +271,8 @@ export default function SuperAdmin() {
         </div>
       )}
 
-      {tab === 'payments' && <Payments />}
+      {tab === 'payments' && <Payments plans={plans} run={run} toast={toast} />}
+      {tab === 'plans' && <Plans plans={plans} reload={loadPlans} run={run} toast={toast} />}
 
       {tab === 'businesses' && (
         <div className="space-y-6">
@@ -227,9 +304,22 @@ export default function SuperAdmin() {
                       <span className="text-xs text-slate-500">desde {new Date(b.createdAt).toLocaleDateString()}</span>
                     </div>
                     <h3 className="mt-3 truncate text-2xl font-extrabold tracking-tight">{b.name}</h3>
+                    {plans.length > 0 && (
+                      <label className="mt-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wider text-slate-400">
+                        Plan
+                        <select
+                          value={b.plan ?? ''}
+                          onChange={(e) => e.target.value && confirm(`¿Cambiar a ${b.name} al plan ${planName(plans, e.target.value)}? Sus funciones cambian de inmediato.`) && run(async () => { await api('PATCH', `/super/businesses/${b.id}/plan`, { plan: e.target.value }); toast(`${b.name}: plan ${planName(plans, e.target.value)}`); await load(); })}
+                          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#0d1017] px-2 py-1.5 text-sm normal-case tracking-normal text-slate-100"
+                        >
+                          {!b.plan && <option value="">Sin plan (todo habilitado)</option>}
+                          {plans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.active ? '' : ' (oculto)'} · {money(p.price)}</option>)}
+                        </select>
+                      </label>
+                    )}
                     {(b.phone || b.plan) && (
                       <p className="mt-1 text-sm text-slate-400">
-                        {b.plan && <span className="mr-2 rounded-full bg-white/10 px-2 py-0.5 text-xs">{b.plan === 'CUSTOM' ? 'Diseño personalizado' : 'Estándar'}</span>}
+                        
                         {b.phone && <a className="hover:underline" href={`https://wa.me/${b.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer">WhatsApp {b.phone}</a>}
                       </p>
                     )}
@@ -274,6 +364,11 @@ export default function SuperAdmin() {
                           {pending ? 'Confirmar pago' : 'Registrar pago'}
                         </Btn>
                       </div>
+                      <Btn className="mt-2 w-full" onClick={() => {
+                        const n = days[b.id] ?? 30;
+                        if (n < 1) return toast('Pon al menos 1 día para la prueba gratis', true);
+                        if (confirm(`¿Dar ${n} día${n === 1 ? '' : 's'} de prueba gratis a ${b.name}?`)) run(async () => { await api('PATCH', `/super/businesses/${b.id}/trial`, { days: n }); toast(`${b.name}: prueba gratis de ${n} días`); await load(); });
+                      }}>Prueba gratis ({days[b.id] ?? 30} días)</Btn>
                       <p className="mt-1.5 text-[11px] text-slate-500">Suma los días a lo que le quede. 0 = sin vencimiento. Al vencer se suspende solo.</p>
                     </div>
                     <Btn className="mt-2 w-full" onClick={() => setAccounts(b)}><Icon name="users" className="mr-1 inline h-4 w-4" />Cuentas y correos</Btn>

@@ -283,7 +283,18 @@ export default function Tv() {
   // Aviso entre canciones: se muestra hasta que el video nuevo empieza a sonar
   const transition = armed && !!cur && (hold || (!playing && !blocked && !slow));
   const hasBanner = !!banner;
-  const fallbackInterlude = transition && !hasBanner; // sin imagen del bar: pantalla de inicio con la mesa que sigue
+  // Con imagen del bar: primero la imagen a pantalla completa (60% del tiempo) y luego la mesa y cancion que siguen.
+  const [showNext, setShowNext] = useState(false);
+  useEffect(() => {
+    setShowNext(false);
+    if (!transition || !bar) return;
+    const left = bar.start + bar.ms * 0.6 - Date.now();
+    if (left <= 0) { setShowNext(true); return; }
+    const t = setTimeout(() => setShowNext(true), left);
+    return () => clearTimeout(t);
+  }, [transition, bar?.start, bar?.ms]);
+  const bannerPhase = transition && hasBanner && !!bar && !showNext;
+  const fallbackInterlude = transition && !bannerPhase; // sin imagen o ya pasó la imagen: pantalla con la mesa que sigue
   useEffect(() => {
     if (!transition) return;
     const t = setTimeout(() => setSlow(true), 15000);
@@ -328,16 +339,42 @@ export default function Tv() {
         {/* Entre canciones: solo se muestra la imagen que el admin subio (si no hay, no se muestra nada) */}
         {banner && (
           <div
-            className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-black transition-opacity duration-500 ${transition ? 'opacity-100' : 'opacity-0'}`}
+            className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-black transition-opacity duration-500 ${bannerPhase ? 'opacity-100' : 'opacity-0'}`}
           >
-            <img key={transition ? (bar?.start ?? cur?.id) : 'off'} src={banner} alt="" className={`h-full w-full object-contain ${transition ? 'tv-banner-anim' : ''}`} />
-            {logo && (
-              <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-8 pb-10 pt-24 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
-                <img src={logo} alt="" className="h-20 w-auto max-w-[40vw] object-contain md:h-28" draggable={false} />
-                <div className="text-4xl font-black md:text-6xl" style={{ color: '#f5ecdc' }}>{state?.business?.name ?? ''}</div>
-                {cur && <div className="text-xl font-bold uppercase tracking-[0.25em] text-[#a9b8ff] md:text-3xl">{cur.auto ? 'Sigue la música' : `Sigue ${cur.tableName}`}</div>}
-              </div>
+            <img key={bannerPhase ? (bar?.start ?? cur?.id) : 'off'} src={banner} alt="" className={`h-full w-full object-cover ${bannerPhase ? 'tv-banner-anim' : ''}`} />
+          </div>
+        )}
+
+        {/* Modo votacion: resultados en vivo de la cancion que acaba de sonar, durante el aviso entre canciones */}
+        {state?.vote && (
+          <div className={`pointer-events-none absolute inset-0 z-[15] flex flex-col items-center justify-center gap-5 bg-black/80 p-8 text-center backdrop-blur-md transition-opacity duration-500 ${transition && !bannerPhase ? 'opacity-100' : 'opacity-0'}`} style={{ fontFamily: "'Nunito', system-ui, sans-serif" }} aria-hidden={!transition || bannerPhase}>
+            <div className="text-xl font-bold uppercase tracking-[0.3em] text-[#a9b8ff] md:text-3xl">¿Qué tal estuvo?</div>
+            <div className="max-w-5xl truncate text-4xl font-black md:text-6xl" style={{ color: '#f5ecdc' }}>{state.vote.title}</div>
+            {state.vote.tableName && <div className="text-xl text-slate-300 md:text-3xl">{state.vote.tableName}</div>}
+            {state.vote.count > 0 ? (
+              <>
+                <div className="flex items-end gap-4">
+                  <span className="text-8xl font-black leading-none md:text-[10rem]" style={{ color: '#fbbf24' }}>{state.vote.avg}</span>
+                  <span className="pb-2 text-4xl text-amber-300 md:text-6xl" aria-hidden>★</span>
+                </div>
+                <div className="text-xl text-slate-300 md:text-3xl">{state.vote.count} voto{state.vote.count === 1 ? '' : 's'}</div>
+                <div className="grid w-full max-w-2xl gap-2">
+                  {[5, 4, 3, 2, 1].map((n) => {
+                    const c = state.vote.dist[n - 1];
+                    return (
+                      <div key={n} className="flex items-center gap-3 text-lg text-slate-300 md:text-2xl">
+                        <span className="w-12 text-right">{n} ★</span>
+                        <div className="h-4 flex-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: `${(c / state.vote.count) * 100}%` }} /></div>
+                        <span className="w-10 text-left">{c}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="text-2xl text-slate-300 md:text-4xl">Vota desde tu celular: escanea el QR de tu mesa</div>
             )}
+            {cur && <div className="mt-2 text-xl font-bold uppercase tracking-[0.25em] text-[#a9b8ff] md:text-3xl">{cur.auto ? 'Sigue la música' : `Sigue ${cur.tableName}`}</div>}
           </div>
         )}
 

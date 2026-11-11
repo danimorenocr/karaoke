@@ -1,4 +1,5 @@
 import { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { auth } from '../lib/api';
 
@@ -171,9 +172,9 @@ export function Dialog({ title, onClose, children, wide = false }: { title: stri
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
-      <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-md'} rounded-3xl border border-white/10 bg-[#0d1017] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex overflow-y-auto bg-black/70 p-4 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`m-auto w-full ${wide ? 'max-w-3xl' : 'max-w-md'} rounded-3xl border border-white/10 bg-[#0d1017] shadow-2xl`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
           <h2 className="text-lg font-bold">{title}</h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Cerrar"><Icon name="close" className="h-5 w-5" /></button>
@@ -181,7 +182,7 @@ export function Dialog({ title, onClose, children, wide = false }: { title: stri
         <div className="p-6">{children}</div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 export function Card({ title, right, children, className = '' }: { title?: string; right?: ReactNode; children: ReactNode; className?: string }) {
@@ -227,9 +228,9 @@ export function Field({ label, hint, ...p }: { label: string; hint?: string } & 
   );
 }
 
-export function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+export function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }) {
   return (
-    <button type="button" onClick={() => onChange(!checked)} className="flex w-full items-start gap-4 rounded-xl border border-white/10 bg-white/5 p-4 text-left" role="switch" aria-checked={checked}>
+    <button type="button" disabled={disabled} onClick={() => onChange(!checked)} className="flex w-full items-start gap-4 rounded-xl border border-white/10 bg-white/5 p-4 text-left disabled:cursor-not-allowed disabled:opacity-40" role="switch" aria-checked={checked}>
       <span className="mt-0.5 flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition" style={{ background: checked ? ACCENT : '#334155' }}>
         <span className={`h-5 w-5 rounded-full bg-white transition ${checked ? 'translate-x-5' : ''}`} />
       </span>

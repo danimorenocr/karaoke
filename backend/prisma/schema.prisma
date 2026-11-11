@@ -69,41 +69,45 @@ enum RequestStatus {
 }
 
 model Business {
-  id                String         @id @default(cuid())
-  name              String
-  slug              String         @unique
+  id                 String         @id @default(cuid())
+  name               String
+  slug               String         @unique
   // Logo del local (data URL, reducido en el navegador)
-  logoUrl           String?        @db.Text
-  logoAt            DateTime?
+  logoUrl            String?        @db.Text
+  logoAt             DateTime?
   // WhatsApp de contacto y plan elegido al registrarse (STANDARD | CUSTOM)
-  phone             String?
-  plan              String?
+  phone              String?
+  plan               String?
   // Hasta cuando esta pagado; al vencer se suspende solo. null = sin vencimiento
-  paidUntil         DateTime?
+  paidUntil          DateTime?
   // Imagen que la TV muestra entre canciones (data URL, ya reducida en el navegador)
-  tvBanner          String?        @db.Text
-  tvBannerAt        DateTime?
+  tvBanner           String?        @db.Text
+  tvBannerAt         DateTime?
   // Segundos que se muestra el aviso entre canciones (para pasar los microfonos de mesa en mesa)
-  tvInterludeSec    Int            @default(8)
+  tvInterludeSec     Int            @default(8)
   // Disenos que sus mesas pueden usar; vacio = todos (los define el super admin)
-  allowedExperiences String[]      @default([])
-  primaryColor      String         @default("#ec4899")
-  status            BusinessStatus @default(ACTIVE)
-  maxPendingPerTable Int           @default(2)
-  autoApprove       Boolean        @default(false)
+  allowedExperiences String[]       @default([])
+  primaryColor       String         @default("#ec4899")
+  status             BusinessStatus @default(ACTIVE)
+  maxPendingPerTable Int            @default(2)
+  autoApprove        Boolean        @default(false)
+  // Modo votacion: tras cada cancion los asistentes la califican (1-5) y el resultado sale en el aviso de la TV
+  voteMode           Boolean        @default(false)
+  voteSec            Int            @default(15)
   // KARAOKE: busca versiones karaoke. ANY: cualquier video de musica.
-  searchMode        SearchMode     @default(KARAOKE)
-  searchProvider    SearchProvider @default(YOUTUBE)
-  autoDjMode        AutoDjMode     @default(OFF)
+  searchMode         SearchMode     @default(KARAOKE)
+  searchProvider     SearchProvider @default(YOUTUBE)
+  autoDjMode         AutoDjMode     @default(OFF)
   // Generos que el Auto-DJ debe poner (vacio = lo mas pedido del bar)
-  autoDjGenres      String[]       @default([])
-  createdAt         DateTime       @default(now())
+  autoDjGenres       String[]       @default([])
+  createdAt          DateTime       @default(now())
 
   payments Payment[]
   users    User[]
   tables   Table[]
   sessions KaraokeSession[]
   requests SongRequest[]
+  votes    SongVote[]
   events   KaraokeEvent[]
 }
 
@@ -117,24 +121,24 @@ model User {
   businessId   String?
   createdAt    DateTime @default(now())
 
-  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business?       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   resets   PasswordReset[]
 
   @@index([businessId])
 }
 
 model Table {
-  id         String   @id @default(cuid())
-  businessId String
-  name       String
-  active     Boolean  @default(true)
+  id               String    @id @default(cuid())
+  businessId       String
+  name             String
+  active           Boolean   @default(true)
   // Token aleatorio del QR. Rotarlo revoca el QR anterior.
-  qrToken    String   @unique
+  qrToken          String    @unique
   // Diseno del cliente para esta mesa (id del catalogo de experiencias del frontend)
-  experienceId String @default("classic")
+  experienceId     String    @default("classic")
   // Al desvincular la mesa, el cliente deja de ver lo pedido antes de esta fecha
   historyClearedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
   business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   requests SongRequest[]
@@ -185,9 +189,27 @@ model SongRequest {
   business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   table    Table?         @relation(fields: [tableId], references: [id], onDelete: Cascade)
   session  KaraokeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  votes    SongVote[]
 
   @@index([businessId, sessionId, status, position])
   @@index([tableId, status])
+}
+
+/// Voto (1-5) de un navegador a una cancion ya terminada. Un voto por navegador y cancion (se puede cambiar).
+model SongVote {
+  id         String   @id @default(cuid())
+  businessId String
+  requestId  String
+  clientId   String
+  rating     Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  request  SongRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, clientId])
+  @@index([businessId, createdAt])
 }
 
 /// Eventos con significado de negocio (no cada pulsacion). Las metricas se calculan a partir de ellos.
@@ -232,6 +254,22 @@ model Payment {
 
   @@index([businessId])
   @@index([createdAt])
+}
+
+// Planes comerciales que ve el publico al registrarse (los edita el super admin). Business.plan guarda el id.
+model Plan {
+  id        String   @id
+  name      String
+  price     Int
+  desc      String   @default("")
+  features  String[]
+  // Funcionalidades habilitadas (ids de plans.service FEATURES)
+  perks     String[]
+  badge     String?
+  highlight Boolean  @default(false)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
 }
 
 // Codigos OTP de recuperacion de contrasena (se guarda solo el hash)

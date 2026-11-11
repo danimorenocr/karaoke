@@ -22,12 +22,12 @@ const STATUS: Record<string, ['slate' | 'green' | 'red' | 'amber' | 'teal', stri
 
 type Tab = 'stats' | 'tables' | 'settings' | 'staff' | 'history';
 
-const NAV: NavItem[] = [
-  { id: 'stats', label: 'Dashboard', icon: 'home' },
+const NAV: (NavItem & { feature?: string })[] = [
+  { id: 'stats', label: 'Dashboard', icon: 'home', feature: 'stats' },
   { id: 'tables', label: 'Mesas y QR', icon: 'qr' },
   { id: 'settings', label: 'Configuración', icon: 'gear' },
-  { id: 'staff', label: 'Equipo', icon: 'users' },
-  { id: 'history', label: 'Historial', icon: 'history' },
+  { id: 'staff', label: 'Equipo', icon: 'users', feature: 'staff' },
+  { id: 'history', label: 'Historial', icon: 'history', feature: 'history' },
 ];
 
 const HERO: Record<Tab, [string, string]> = {
@@ -407,19 +407,24 @@ export default function Admin() {
   const run = useAction(toast);
 
   const load = useCallback(async () => {
-    const [b, t, s, h] = await Promise.all([api('GET', '/admin/business'), api('GET', '/admin/tables'), api('GET', '/admin/staff'), api('GET', '/admin/history')]);
+    const b = await api('GET', '/admin/business');
+    const has = (f: string) => (b.features ?? []).includes(f);
+    const [t, s, h] = await Promise.all([api('GET', '/admin/tables'), has('staff') ? api('GET', '/admin/staff') : [], has('history') ? api('GET', '/admin/history') : []]);
     setBiz(b); setTables(t); setStaff(s); setHistory(h);
   }, []);
   useEffect(() => { load().catch((e) => toast(e.message, true)); }, [load]);
 
   if (!biz) return <div className="grid min-h-screen place-items-center bg-[#05060a] text-slate-500">Cargando...</div>;
   const reload = (fn: () => Promise<unknown>, ok?: string) => run(async () => { await fn(); if (ok) toast(ok); await load(); });
-  const [title, subtitle] = HERO[tab];
+  const feats: string[] = biz.features ?? [];
+  const nav = NAV.filter((n) => !n.feature || feats.includes(n.feature));
+  const curTab: Tab = nav.some((n) => n.id === tab) ? tab : 'tables';
+  const [title, subtitle] = HERO[curTab];
 
   return (
     <Shell
-      nav={NAV}
-      active={tab}
+      nav={nav}
+      active={curTab}
       onNav={(id) => setTab(id as Tab)}
       eyebrow="Administración"
       title={title}
@@ -427,12 +432,12 @@ export default function Admin() {
       org={biz.name}
       links={[['/dj', 'Panel DJ', 'dj'], ['/tv', 'Pantalla TV', 'tv']]}
     >
-      {tab === 'stats' && <StatsPanel />}
+      {curTab === 'stats' && <StatsPanel />}
 
-      {tab === 'tables' && (
+      {curTab === 'tables' && (
         <TablesView
           tables={tables}
-          allowed={biz.allowedExperiences ?? []}
+          allowed={feats.includes('designs') ? biz.allowedExperiences ?? [] : ['classic']}
           bizName={biz.name}
           onCreate={(name) => reload(() => api('POST', '/admin/tables', { name }), 'Mesa creada')}
           onDelete={(ids) => reload(async () => { const r = await api('POST', '/admin/tables/delete', { ids }); toast(`${r.deleted} mesa${r.deleted === 1 ? '' : 's'} eliminada${r.deleted === 1 ? '' : 's'}`); }, '')}
@@ -442,9 +447,9 @@ export default function Admin() {
         />
       )}
 
-      {tab === 'settings' && <Settings biz={biz} onSave={(d) => reload(() => api('PATCH', '/admin/business', d), 'Configuración guardada')} />}
+      {curTab === 'settings' && <Settings biz={biz} onSave={(d) => reload(() => api('PATCH', '/admin/business', d), 'Configuración guardada')} />}
 
-      {tab === 'staff' && (
+      {curTab === 'staff' && (
         <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
           <Card title="Crear cuenta de DJ">
             <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); reload(async () => { await api('POST', '/admin/staff', dj); setDj({ name: '', email: '', password: '' }); }, 'DJ creado'); }}>
@@ -474,7 +479,7 @@ export default function Admin() {
         </div>
       )}
 
-      {tab === 'history' && (
+      {curTab === 'history' && (
         <Card title="Últimas 200 solicitudes">
           {history.length === 0 ? (
             <Empty>Todavía no hay solicitudes.</Empty>
@@ -549,20 +554,22 @@ function resizeLogo(file: File): Promise<string> {
 }
 
 function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
+  const has = (id: string) => (biz.features ?? []).includes(id);
   const [banner, setBanner] = useState<string | null>(biz.tvBanner ?? null);
   const [logo, setLogo] = useState<string | null>(biz.logoUrl ?? null);
   const [logoDirty, setLogoDirty] = useState(false);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
+  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ ...f, ...(logoDirty ? { logoUrl: logo } : {}), maxPendingPerTable: Number(f.maxPendingPerTable), tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
           <Field label="Nombre" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required />
+          {!has('branding') ? <p className="rounded-xl border border-dashed border-white/15 p-3 text-sm text-slate-400">No incluido en tu plan. Escríbenos para mejorarlo.</p> : (<>
           <div className="grid gap-1.5 text-sm">
             <span className="font-medium text-slate-300">Logo del local (opcional)</span>
             <div className="flex flex-wrap items-center gap-3">
@@ -589,6 +596,7 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
               <span className="text-xs text-slate-500">{f.primaryColor} · se usa en la pantalla de los clientes</span>
             </div>
           </label>
+          </>)}
         </div>
       </Card>
       <Card title="Reglas de solicitudes">
@@ -601,25 +609,44 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
                 <button
                   key={k}
                   type="button"
+                  disabled={k === 'ANY' && !has('searchAny')}
                   onClick={() => setF({ ...f, searchMode: k })}
-                  className="rounded-xl border p-3 text-left transition"
-                  style={f.searchMode === k ? { borderColor: ACCENT, background: ACCENT + '1a' } : { borderColor: 'rgba(255,255,255,.1)' }}
+                  className="rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-40"
+                  style={(has('searchAny') ? f.searchMode : 'KARAOKE') === k ? { borderColor: ACCENT, background: ACCENT + '1a' } : { borderColor: 'rgba(255,255,255,.1)' }}
                 >
                   <span className="block font-semibold">{title}</span>
-                  <span className="block text-xs text-slate-500">{hint}</span>
+                  <span className="block text-xs text-slate-500">{k === 'ANY' && !has('searchAny') ? 'No incluido en tu plan' : hint}</span>
                 </button>
               ))}
             </div>
           </div>
           <Toggle
-            checked={!f.autoApprove}
+            disabled={!has('autoApprove')}
+            checked={!(f.autoApprove && has('autoApprove'))}
             onChange={(v) => setF({ ...f, autoApprove: !v })}
             label="El DJ debe aprobar cada solicitud"
             hint="Si lo desactivas, las canciones pasan directo a la cola y suenan sin revisión."
           />
         </div>
       </Card>
-      <Card title="Banner de la TV" className="lg:col-span-2">
+      <Card title="Modo votación" className="lg:col-span-2">
+        {has('voting') ? (
+          <div className="grid gap-4 md:grid-cols-2 md:items-start">
+            <Toggle
+              checked={f.voteMode}
+              onChange={(v) => setF({ ...f, voteMode: v })}
+              label="Los asistentes votan cada canción"
+              hint="Al terminar una canción, cada persona la califica de 1 a 5 estrellas desde su celular (no puede votar la de su propia mesa) y el resultado aparece en la pantalla de la TV entre canciones."
+            />
+            <label className="grid gap-1.5 text-sm">
+              <span className="font-medium text-slate-300">Segundos de votación entre canciones</span>
+              <input type="number" min={5} max={60} disabled={!f.voteMode} value={f.voteSec} onChange={(e) => setF({ ...f, voteSec: e.target.value as any })} className="h-11 max-w-xs rounded-xl border border-white/10 bg-white/5 px-3 outline-none focus:border-white/30 disabled:opacity-40" />
+              <span className="text-xs text-slate-500">Es lo que dura el aviso de la TV con los resultados en vivo (de 5 a 60). Por defecto 15.</span>
+            </label>
+          </div>
+        ) : <p className="rounded-xl border border-dashed border-white/15 p-3 text-sm text-slate-400">No incluido en tu plan. Escríbenos para mejorarlo.</p>}
+      </Card>
+      {has('tvBanner') ? <Card title="Banner de la TV" className="lg:col-span-2">
         <div className="grid gap-5 md:grid-cols-[minmax(0,22rem)_1fr] md:items-center">
           <div className="grid aspect-video place-items-center overflow-hidden rounded-xl border border-white/10 bg-black">
             {banner ? <img src={banner} alt="Banner de la TV" className="h-full w-full object-contain" /> : <span className="px-4 text-center text-xs text-slate-500">Sin imagen: la TV muestra el nombre del bar</span>}
@@ -652,7 +679,7 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
             {bannerDirty && <span className="text-xs text-amber-300">Pulsa «Guardar cambios» para aplicarla.</span>}
           </div>
         </div>
-      </Card>
+      </Card> : <Card title="Banner de la TV" className="lg:col-span-2"><p className="rounded-xl border border-dashed border-white/15 p-3 text-sm text-slate-400">No incluido en tu plan. Escríbenos para mejorarlo.</p></Card>}
       <div className="lg:col-span-2"><Btn kind="accent" className="px-8 py-3">Guardar cambios</Btn></div>
     </form>
   );
