@@ -29,6 +29,8 @@ export const AUTO_DJ_GENRES = [
 ];
 const GENRE_QUERIES = ['éxitos', 'las mejores canciones', 'clásicos', 'canciones más populares', 'hits'];
 const DEFAULT_COLOR = '#ec4899';
+const NEXT_UP_SEC = 4;
+const SCORE_SEC = 6; // modo acumulado por mesa: segundos que se muestra el marcador general tras la votacion // en modo competencia: segundos extra para anunciar la siguiente mesa tras la votacion
 const ytThumb = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED'];
 
@@ -221,7 +223,7 @@ export class QueueService {
     // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
     const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
     const f = await this.plans.of(businessId);
-    const base = { business: { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') ? business.tvBannerAt : null, logoAt: f.has('branding') ? business.logoAt : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec : 0), voteMode: business.voteMode && f.has('voting'), features: [...f] }, tvConnected, tvArmed };
+    const base = { business: { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') && business.tvBanner ? (business.tvBannerAt ?? new Date(0)) : null, primaryColor: f.has('branding') ? business.primaryColor : null, logoAt: f.has('branding') && business.logoUrl ? (business.logoAt ?? new Date(0)) : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec + (business.voteScope === 'TABLE' ? SCORE_SEC : 0) + NEXT_UP_SEC : 0), voteMode: business.voteMode && f.has('voting'), voteSec: business.voteMode && f.has('voting') ? business.voteSec : null, voteScope: business.voteScope, scoreSec: business.voteMode && f.has('voting') && business.voteScope === 'TABLE' ? SCORE_SEC : 0, features: [...f] }, tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], autoQueue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -263,7 +265,7 @@ export class QueueService {
   /** Estado para la TV: lo minimo para reproducir. */
   async playerState(businessId: string) {
     const s = await this.djState(businessId);
-    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { id: true, voteMode: true, voteSec: true } });
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { id: true, voteMode: true, voteSec: true, voteScope: true } });
     return {
       vote: await this.lastVote(b, await this.plans.of(businessId)),
       business: s.business,
@@ -326,14 +328,14 @@ export class QueueService {
 
   /** Ventana en la que se puede votar una cancion tras terminar: lo que dura el aviso de la TV mas un margen. */
   private voteWindowMs(voteSec: number) {
-    return (voteSec + 40) * 1000;
+    return voteSec * 1000 + 1500; // la TV pasa al aviso de la siguiente mesa justo despues
   }
 
   /** Resultado de la votacion de la ultima cancion terminada, mientras siga abierta (null si el modo esta apagado o no hay). */
-  async lastVote(b: { id: string; voteMode: boolean; voteSec: number }, feats: Set<string>, tableId?: string) {
+  async lastVote(b: { id: string; voteMode: boolean; voteSec: number; voteScope: string }, feats: Set<string>, tableId?: string) {
     if (!b.voteMode || !feats.has('voting')) return null;
     const r = await this.prisma.songRequest.findFirst({
-      where: { businessId: b.id, status: 'COMPLETED', completedAt: { gte: new Date(Date.now() - this.voteWindowMs(b.voteSec)) } },
+      where: { businessId: b.id, status: 'COMPLETED', auto: false, completedAt: { gte: new Date(Date.now() - this.voteWindowMs(b.voteSec)) } },
       orderBy: { completedAt: 'desc' },
       include: { table: { select: { name: true } } },
     });
@@ -342,7 +344,24 @@ export class QueueService {
     const dist = [1, 2, 3, 4, 5].map((n) => groups.find((g) => g.rating === n)?._count._all ?? 0);
     const count = dist.reduce((a, c) => a + c, 0);
     const avg = count ? Math.round((dist.reduce((a, c, i) => a + c * (i + 1), 0) / count) * 10) / 10 : null;
-    return { id: r.id, title: r.title, tableName: r.auto || !r.table ? null : r.table.name, auto: r.auto, mine: !!tableId && r.tableId === tableId, count, avg, dist };
+    // Acumulado por mesa: puntos (suma de estrellas) de todas las actuaciones de la sesion, de mayor a menor
+    let ranking: { tableName: string; points: number; votes: number; avg: number; songs: number; current: boolean }[] | null = null;
+    if (b.voteScope === 'TABLE' && !r.auto) {
+      const votes = await this.prisma.songVote.findMany({ where: { request: { sessionId: r.sessionId, auto: false, tableId: { not: null } } }, select: { rating: true, request: { select: { id: true, tableId: true } } } });
+      const perTable = new Map<string, { points: number; votes: number; songs: Set<string> }>();
+      for (const v of votes) {
+        const id = v.request.tableId!;
+        const t = perTable.get(id) ?? { points: 0, votes: 0, songs: new Set<string>() };
+        t.points += v.rating; t.votes += 1; t.songs.add(v.request.id);
+        perTable.set(id, t);
+      }
+      if (r.tableId && !perTable.has(r.tableId)) perTable.set(r.tableId, { points: 0, votes: 0, songs: new Set() }); // la que acaba de cantar siempre aparece
+      const names = new Map((await this.prisma.table.findMany({ where: { businessId: b.id }, select: { id: true, name: true } })).map((t) => [t.id, t.name]));
+      ranking = [...perTable.entries()]
+        .map(([id, t]) => ({ tableName: names.get(id) ?? '—', points: t.points, votes: t.votes, avg: t.votes ? Math.round((t.points / t.votes) * 10) / 10 : 0, songs: t.songs.size, current: id === r.tableId }))
+        .sort((x, y) => y.points - x.points || y.avg - x.avg);
+    }
+    return { scope: b.voteScope, ranking, id: r.id, title: r.title, tableName: r.auto || !r.table ? null : r.table.name, auto: r.auto, mine: !!tableId && r.tableId === tableId, count, avg, dist, sec: b.voteSec, leftMs: Math.max(0, r.completedAt!.getTime() + this.voteWindowMs(b.voteSec) - Date.now()) };
   }
 
   /** Un asistente vota (1-5) la cancion que acaba de sonar. Un voto por navegador: votar de nuevo lo cambia. */
@@ -353,9 +372,9 @@ export class QueueService {
     if (!b.voteMode || !(await this.plans.has(b.id, 'voting'))) throw new ConflictException('La votacion no esta activa');
     const r = await this.prisma.songRequest.findFirst({ where: { id: requestId, businessId: b.id } });
     if (!r || r.status !== 'COMPLETED' || !r.completedAt || Date.now() - r.completedAt.getTime() > this.voteWindowMs(b.voteSec)) {
-      throw new ConflictException('La votacion de esta cancion ya cerro');
+      throw new ConflictException('La votacion de esta actuacion ya cerro');
     }
-    if (r.tableId === table.id) throw new ForbiddenException('No puedes votar la cancion de tu propia mesa');
+    if (r.tableId === table.id) throw new ForbiddenException('No puedes votar la actuacion de tu propia mesa');
     await this.prisma.songVote.upsert({
       where: { requestId_clientId: { requestId, clientId } },
       create: { businessId: b.id, requestId, clientId, rating },

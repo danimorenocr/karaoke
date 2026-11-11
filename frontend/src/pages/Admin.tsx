@@ -560,11 +560,11 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
   const [logoDirty, setLogoDirty] = useState(false);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
+  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, voteScope: (biz.voteScope ?? 'SONG') as 'SONG' | 'TABLE', searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteScope: f.voteScope, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
@@ -629,19 +629,30 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
           />
         </div>
       </Card>
-      <Card title="Modo votación" className="lg:col-span-2">
+      <Card title="Modo competencia" className="lg:col-span-2">
         {has('voting') ? (
           <div className="grid gap-4 md:grid-cols-2 md:items-start">
             <Toggle
               checked={f.voteMode}
               onChange={(v) => setF({ ...f, voteMode: v })}
-              label="Los asistentes votan cada canción"
-              hint="Al terminar una canción, cada persona la califica de 1 a 5 estrellas desde su celular (no puede votar la de su propia mesa) y el resultado aparece en la pantalla de la TV entre canciones."
+              label="Competencia de karaoke: el público califica cada actuación"
+              hint="Al terminar cada actuación, la TV abre una pantalla de votación y cada persona la califica de 1 a 5 estrellas desde su celular (no puede votar a su propia mesa). El puntaje sube en vivo y la votación se cierra sola cuando pasa a la siguiente mesa."
             />
+            <div className="grid gap-1.5 text-sm md:col-span-2">
+              <span className="font-medium text-slate-300">¿Cómo se puntúa?</span>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([['SONG', 'Por canción', 'Cada actuación tiene su propio puntaje; la TV muestra el de la canción que acaba de sonar.'], ['TABLE', 'Acumulado por mesa', 'Los puntos de cada mesa se suman durante la sesión y la TV muestra el ranking de todas las mesas.']] as const).map(([id, name, desc]) => (
+                  <button key={id} type="button" disabled={!f.voteMode} onClick={() => setF({ ...f, voteScope: id })} className={`rounded-xl border p-3 text-left transition disabled:opacity-40 ${f.voteScope === id ? 'border-amber-300/70 bg-amber-300/10' : 'border-white/10 bg-white/5 hover:border-white/25'}`}>
+                    <div className="font-semibold">{name}</div>
+                    <div className="mt-0.5 text-xs text-slate-400">{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="grid gap-1.5 text-sm">
-              <span className="font-medium text-slate-300">Segundos de votación entre canciones</span>
+              <span className="font-medium text-slate-300">Segundos de votación por actuación</span>
               <input type="number" min={5} max={60} disabled={!f.voteMode} value={f.voteSec} onChange={(e) => setF({ ...f, voteSec: e.target.value as any })} className="h-11 max-w-xs rounded-xl border border-white/10 bg-white/5 px-3 outline-none focus:border-white/30 disabled:opacity-40" />
-              <span className="text-xs text-slate-500">Es lo que dura el aviso de la TV con los resultados en vivo (de 5 a 60). Por defecto 15.</span>
+              <span className="text-xs text-slate-500">Lo que dura la pantalla de votación en la TV (de 5 a 60). Por defecto 15. Después se anuncia la siguiente mesa unos 5 segundos más.</span>
             </label>
           </div>
         ) : <p className="rounded-xl border border-dashed border-white/15 p-3 text-sm text-slate-400">No incluido en tu plan. Escríbenos para mejorarlo.</p>}

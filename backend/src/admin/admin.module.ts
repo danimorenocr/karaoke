@@ -60,6 +60,7 @@ class UpdateBusinessDto {
   @IsOptional() @IsBoolean() autoApprove?: boolean;
   @IsOptional() @IsBoolean() voteMode?: boolean;
   @IsOptional() @IsInt() @Min(5) @Max(60) voteSec?: number;
+  @IsOptional() @IsIn(['SONG', 'TABLE']) voteScope?: 'SONG' | 'TABLE';
   @IsOptional() @IsIn(['KARAOKE', 'ANY']) searchMode?: 'KARAOKE' | 'ANY';
 }
 class TableDto {

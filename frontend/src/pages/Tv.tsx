@@ -95,6 +95,7 @@ export default function Tv() {
     }
     if (cur.id !== loadedId.current || forceReload) {
       const isNew = cur.id !== loadedId.current;
+      const firstLoad = loadedId.current === null; // solo al recargar la pagina se retoma a mitad de cancion
       loadedId.current = cur.id;
       reported.current = null;
       setBlocked(false);
@@ -102,7 +103,7 @@ export default function Tv() {
       setSlow(false);
       endHold();
       // Si la TV se recargo (o el servidor reinicio) a mitad de cancion, retoma donde iba
-      const pos = Number(s.session?.positionSec ?? 0);
+      const pos = isNew && !firstLoad ? 0 : Number(s.session?.positionSec ?? 0);
       const start = () => p.loadVideoById({ videoId: cur.videoId, startSeconds: pos > 5 ? pos - 2 : 0 });
       const sec = Number(s.business?.tvInterludeSec ?? 8);
       lastPaused.current = false;
@@ -213,7 +214,7 @@ export default function Tv() {
       const p = playerRef.current;
       const id = loadedId.current;
       const st = p?.getPlayerState?.();
-      const sendPos = id && (st === window.YT?.PlayerState?.PLAYING || st === window.YT?.PlayerState?.PAUSED);
+      const sendPos = id && !holdRef.current && (st === window.YT?.PlayerState?.PLAYING || st === window.YT?.PlayerState?.PAUSED);
       api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(p.getCurrentTime()) } : {}).catch(() => {});
     }, 5000);
     // Vigilante: si deberia estar sonando (el DJ no pauso) y el reproductor esta detenido, lo reanuda.
@@ -249,7 +250,38 @@ export default function Tv() {
     };
   }, [load]);
 
+  // Sonido de transicion (sintetizado, sin archivos). El audio solo se desbloquea tras un clic en la TV.
+  const audioRef = useRef<AudioContext | null>(null);
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      if (!audioRef.current) audioRef.current = new AC();
+      audioRef.current.resume?.();
+    } catch { /* sin audio: el interlude funciona igual */ }
+  }
+  function chime(kind: 'in' | 'next' | 'score') {
+    const ctx = audioRef.current;
+    if (!ctx || ctx.state !== 'running') return;
+    const notes = kind === 'in' ? [523.25, 659.25, 783.99, 1046.5] : kind === 'score' ? [659.25, 880, 1318.5] : [783.99, 1174.66];
+    const step = kind === 'in' ? 0.13 : kind === 'score' ? 0.12 : 0.16;
+    const t0 = ctx.currentTime + 0.02;
+    notes.forEach((f, i) => {
+      const t = t0 + i * step;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + (kind === 'in' ? 1.1 : 0.8));
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 1.2);
+    });
+  }
+
   async function start() {
+    unlockAudio();
     armedRef.current = true;
     setArmed(true);
     claimRef.current(); // esta pantalla pasa a ser la TV activa del bar
@@ -278,23 +310,54 @@ export default function Tv() {
   }, [logoAt]);
 
   const cur = state?.current;
+  // Fondo de la transmision: el color de marca del bar muy oscurecido (en vez de negro puro)
+  const brand = /^#[0-9a-f]{6}$/i.test(state?.business?.primaryColor ?? '') ? state.business.primaryColor : null;
+  const tvBg = brand ? `color-mix(in srgb, ${brand} 24%, #000)` : '#000';
   const noSession = state && !state.session;
   const idle = !cur;
   // Aviso entre canciones: se muestra hasta que el video nuevo empieza a sonar
   const transition = armed && !!cur && (hold || (!playing && !blocked && !slow));
-  const hasBanner = !!banner;
-  // Con imagen del bar: primero la imagen a pantalla completa (60% del tiempo) y luego la mesa y cancion que siguen.
+  const logoSrc = logo ?? "/logo.png"; // sin logo propio, el de TONO (igual que la pantalla de inicio)
+  const bigImg = banner ?? logoSrc; // imagen grande del interlude: la del bar o, si no hay, el logo
+  const hasBanner = !!bigImg;
+  // Modo competencia: pantalla de votacion (con cuenta regresiva) y, al cerrar, el aviso de la siguiente mesa.
+  // Sin competencia: imagen del bar a pantalla completa (60% del tiempo) y luego la mesa y cancion que siguen.
+  const voteSec: number | null = state?.business?.voteSec ?? null;
+  const scoreSec: number = state?.business?.scoreSec ?? 0; // marcador general (solo acumulado por mesa)
+  // El resultado de la votacion deja de venir del servidor al cerrarse la ventana: se conserva durante el interlude.
+  const [snap, setSnap] = useState<any>(null);
+  useEffect(() => { if (state?.vote) setSnap(state.vote); }, [state?.vote]);
+  useEffect(() => { if (!transition) setSnap(null); }, [transition]);
+  const vt = state?.vote ?? snap;
+  const voteExpected = voteSec != null && (!!vt || (!!cur && cur.id === finishedId));
   const [showNext, setShowNext] = useState(false);
   useEffect(() => {
     setShowNext(false);
     if (!transition || !bar) return;
-    const left = bar.start + bar.ms * 0.6 - Date.now();
+    const left = bar.start + (voteExpected ? (voteSec! + (vt?.ranking ? scoreSec : 0)) * 1000 : bar.ms * 0.6) - Date.now();
     if (left <= 0) { setShowNext(true); return; }
     const t = setTimeout(() => setShowNext(true), left);
     return () => clearTimeout(t);
-  }, [transition, bar?.start, bar?.ms]);
-  const bannerPhase = transition && hasBanner && !!bar && !showNext;
-  const fallbackInterlude = transition && !bannerPhase; // sin imagen o ya pasó la imagen: pantalla con la mesa que sigue
+  }, [transition, bar?.start, bar?.ms, voteExpected, voteSec, scoreSec, !!vt?.ranking]);
+  const [tick, setTick] = useState(0);
+  const ticking = transition && voteExpected;
+  useEffect(() => {
+    if (!ticking) return;
+    const t = setInterval(() => setTick((n) => n + 1), 250);
+    return () => clearInterval(t);
+  }, [ticking]);
+  void tick;
+  const elapsed = bar ? Date.now() - bar.start : 0;
+  const inCompetition = transition && voteExpected && !!bar && !showNext;
+  const votePhase = inCompetition && elapsed < voteSec! * 1000;
+  const scorePhase = inCompetition && !votePhase && scoreSec > 0 && !!vt?.ranking;
+  const bannerPhase = transition && hasBanner && !!bar && !showNext && !voteExpected;
+  const fallbackInterlude = transition && !bannerPhase && !votePhase && !scorePhase; // ya paso la imagen / la votacion: pantalla con la mesa que sigue
+  const voteLeft = votePhase && bar && voteSec != null ? Math.max(0, Math.ceil((bar.start + voteSec * 1000 - Date.now()) / 1000)) : 0;
+  useEffect(() => { if (votePhase) chime('in'); }, [votePhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (scorePhase) chime('score'); }, [scorePhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (bannerPhase) chime('in'); }, [bannerPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (fallbackInterlude && !blocked) chime('next'); }, [fallbackInterlude]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!transition) return;
     const t = setTimeout(() => setSlow(true), 15000);
@@ -302,7 +365,7 @@ export default function Tv() {
   }, [transition, cur?.id]);
 
   return (
-    <div className="fixed inset-0 bg-black text-white">
+    <div className="fixed inset-0 text-white" style={{ background: tvBg }}>
       <style>{`
               @keyframes tv-in{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
               @keyframes tv-glow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
@@ -313,11 +376,17 @@ export default function Tv() {
               .tv-idle>.tv-glow{animation:tv-glow 6s ease-in-out infinite}
               .tv-btn{animation:tv-pulse 2.4s infinite;transition:transform .2s,filter .2s}.tv-btn:hover{transform:scale(1.04);filter:brightness(1.08)}.tv-btn:active{transform:scale(.97)}
               .tv-eq i{display:block;width:.6rem;border-radius:9px;background:#a9b8ff;animation:tv-eq 1.2s ease-in-out infinite}
-              @keyframes tv-kb{from{opacity:0;transform:scale(1.02)}12%{opacity:1}to{opacity:1;transform:scale(1.1)}}
+              @keyframes tv-kb{from{opacity:0;transform:scale(.96)}15%{opacity:1}to{opacity:1;transform:scale(1.03)}}
               @keyframes tv-next{0%,100%{box-shadow:0 0 0 0 #a9b8ff55}50%{box-shadow:0 0 60px 6px #a9b8ff33}}
               @keyframes tv-bar{from{width:0}to{width:100%}}
       .tv-bar{background:#a9b8ff;box-shadow:0 0 14px #a9b8ffaa;animation:tv-bar linear both}
       .tv-banner-anim{animation:tv-kb 12s ease-out both}
+              @keyframes tv-up{from{opacity:0;transform:translateY(5vh) scale(.97)}to{opacity:1;transform:none}}
+              @keyframes tv-ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.9);opacity:0}}
+              @keyframes tv-dot{0%,100%{opacity:1}50%{opacity:.25}}
+              .tv-dot{animation:tv-dot 1s ease-in-out infinite}
+              .tv-up{animation:tv-up .8s both cubic-bezier(.2,.7,.2,1)}
+              .tv-ring{animation:tv-ring 1.8s ease-out infinite}
               .tv-next{animation:tv-next 2.2s ease-in-out infinite}
               @media (prefers-reduced-motion:reduce){.tv-idle *,.tv-banner-anim{animation:none!important}}
             `}</style>
@@ -334,51 +403,137 @@ export default function Tv() {
         </div>
       )}
       <div className="absolute inset-0">
-        <div ref={hostRef} className="absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full" />
+        <div ref={hostRef} className="absolute inset-x-0 bottom-0 top-[11vh] [&>iframe]:h-full [&>iframe]:w-full" />
 
-        {/* Entre canciones: solo se muestra la imagen que el admin subio (si no hay, no se muestra nada) */}
-        {banner && (
+        {/* Interlude, fase 1: imagen del bar centrada sobre su propio fondo difuminado */}
+        {bigImg && (
           <div
-            className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-black transition-opacity duration-500 ${bannerPhase ? 'opacity-100' : 'opacity-0'}`}
+            className={`pointer-events-none absolute inset-0 z-[5] overflow-hidden bg-[#1c1c20] transition-opacity duration-500 ${bannerPhase ? 'opacity-100' : 'opacity-0'}`}
+            style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}
           >
-            <img key={bannerPhase ? (bar?.start ?? cur?.id) : 'off'} src={banner} alt="" className={`h-full w-full object-cover ${bannerPhase ? 'tv-banner-anim' : ''}`} />
+            <img src={bigImg} alt="" className="absolute inset-0 h-full w-full scale-125 object-cover opacity-70 blur-[90px]" draggable={false} />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/70" />
+            <div className="absolute inset-0 flex items-center justify-center pb-[9vh]">
+              <img key={bannerPhase ? (bar?.start ?? cur?.id) : 'off'} src={bigImg} alt="" className={`max-h-[68vh] max-w-[80vw] object-contain shadow-[0_30px_80px_rgba(0,0,0,.55)] ${bannerPhase ? 'tv-banner-anim' : ''}`} draggable={false} />
+            </div>
+            <div className="absolute inset-x-0 bottom-[7vh] text-center text-2xl font-semibold text-slate-200/90 md:text-3xl">
+              Pide tu canción desde tu mesa · <span className="font-bold text-[#a9c0ff]">escanea el QR</span>
+            </div>
+            <div className="absolute bottom-[3.5vh] right-[4vw] flex items-baseline gap-3 text-slate-300/80">
+              <span className="text-xl font-semibold md:text-2xl">con</span>
+              <span className="text-3xl font-black tracking-[0.2em] md:text-5xl" style={{ color: '#e8e4dc' }}>TONO</span>
+            </div>
           </div>
         )}
 
-        {/* Modo votacion: resultados en vivo de la cancion que acaba de sonar, durante el aviso entre canciones */}
-        {state?.vote && (
-          <div className={`pointer-events-none absolute inset-0 z-[15] flex flex-col items-center justify-center gap-5 bg-black/80 p-8 text-center backdrop-blur-md transition-opacity duration-500 ${transition && !bannerPhase ? 'opacity-100' : 'opacity-0'}`} style={{ fontFamily: "'Nunito', system-ui, sans-serif" }} aria-hidden={!transition || bannerPhase}>
-            <div className="text-xl font-bold uppercase tracking-[0.3em] text-[#a9b8ff] md:text-3xl">¿Qué tal estuvo?</div>
-            <div className="max-w-5xl truncate text-4xl font-black md:text-6xl" style={{ color: '#f5ecdc' }}>{state.vote.title}</div>
-            {state.vote.tableName && <div className="text-xl text-slate-300 md:text-3xl">{state.vote.tableName}</div>}
-            {state.vote.count > 0 ? (
-              <>
-                <div className="flex items-end gap-4">
-                  <span className="text-8xl font-black leading-none md:text-[10rem]" style={{ color: '#fbbf24' }}>{state.vote.avg}</span>
+        {/* Modo competencia: pantalla de votacion con puntaje en vivo; se cierra cuando pasa a la siguiente mesa */}
+        {votePhase && bar && voteSec != null && (() => {
+          const dist: number[] = vt?.dist ?? [0, 0, 0, 0, 0];
+          const count: number = vt?.count ?? 0;
+          const title = vt?.title ?? cur?.title ?? '';
+          const who = vt ? vt.tableName : cur?.auto ? null : cur?.tableName;
+          return (
+            <div key={bar.start} className="tv-up absolute inset-0 z-[15] overflow-hidden text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif", background: tvBg }}>
+              <div className="tv-glow absolute left-1/2 top-[42%] h-[85vmin] w-[85vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#fbbf2433,transparent 65%)' }} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-[2.2vh] px-[6vw] pb-[10vh]">
+                <img src={logoSrc} alt="" className="h-[13vh] max-w-[40vw] object-contain drop-shadow-[0_10px_30px_rgba(0,0,0,.5)]" draggable={false} />
+                <div className="flex items-center gap-3 rounded-full border border-amber-300/40 bg-amber-300/10 px-6 py-2 text-xl font-extrabold uppercase tracking-[0.3em] text-amber-300 md:text-2xl">
+                  <span className="tv-dot h-3 w-3 rounded-full bg-red-500" /> Competencia · Votación abierta
+                </div>
+                <div className="text-2xl font-semibold text-slate-300 md:text-4xl">{who ? 'Acaba de cantar' : 'Acaba de sonar'}</div>
+                {who && <div className="max-w-[88vw] truncate bg-gradient-to-b from-white to-[#ffe9a8] bg-clip-text pb-1 text-7xl font-black leading-tight text-transparent md:text-[8rem]">{who}</div>}
+                <div className="max-w-[84vw] truncate text-3xl font-bold text-slate-200 md:text-5xl">{title}</div>
+                <div className="mt-[1vh] flex items-end gap-4">
+                  <span className={`font-black leading-none tabular-nums ${vt?.ranking ? 'text-7xl md:text-[6.5rem]' : 'text-8xl md:text-[10rem]'}`} style={{ color: '#fbbf24' }}>{count > 0 ? vt.avg : '—'}</span>
                   <span className="pb-2 text-4xl text-amber-300 md:text-6xl" aria-hidden>★</span>
                 </div>
-                <div className="text-xl text-slate-300 md:text-3xl">{state.vote.count} voto{state.vote.count === 1 ? '' : 's'}</div>
-                <div className="grid w-full max-w-2xl gap-2">
-                  {[5, 4, 3, 2, 1].map((n) => {
-                    const c = state.vote.dist[n - 1];
+                <div className="text-xl text-slate-300 md:text-3xl">{count > 0 ? `${count} voto${count === 1 ? '' : 's'} del público` : 'Esperando los votos del público…'}</div>
+                {vt?.ranking ? null : (
+                <div className="grid w-full max-w-2xl gap-1.5">
+                  {[5, 4, 3, 2, 1].map((n) => (
+                    <div key={n} className="flex items-center gap-3 text-lg text-slate-300 md:text-2xl">
+                      <span className="w-12 text-right">{n} ★</span>
+                      <div className="h-3.5 flex-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: count ? `${(dist[n - 1] / count) * 100}%` : '0%' }} /></div>
+                      <span className="w-10 text-left">{dist[n - 1]}</span>
+                    </div>
+                  ))}
+                </div>
+                )}
+              </div>
+              <div className="absolute inset-x-0 bottom-[3.2vh] px-[6vw] text-center">
+                <div className="text-xl font-semibold text-slate-200 md:text-3xl">
+                  Escanea el QR de tu mesa y <span className="font-extrabold text-amber-300">califica la actuación</span> · la votación cierra en <span className="font-extrabold tabular-nums text-white">{voteLeft}s</span>
+                </div>
+                <div className="mx-auto mt-3 h-3 w-full max-w-4xl overflow-hidden rounded-full bg-white/15">
+                  <div className="tv-bar h-full" style={{ animationDuration: `${voteSec * 1000}ms`, background: '#fbbf24', boxShadow: '0 0 14px #fbbf24aa' }} />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Modo competencia (acumulado por mesa): marcador general con puntos, estilo concurso */}
+        {scorePhase && bar && vt?.ranking && (() => {
+          const rk: any[] = vt.ranking;
+          const top = rk.slice(0, 5);
+          const cu = rk.find((x) => x.current);
+          const rows = cu && !top.includes(cu) ? [...top.slice(0, 4), cu] : top;
+          const gained = (vt.dist as number[]).reduce((a, c, i) => a + c * (i + 1), 0);
+          const tile = ['linear-gradient(90deg,#f59e0b,#fbbf24)', 'linear-gradient(90deg,#94a3b8,#cbd5e1)', 'linear-gradient(90deg,#b45309,#d97706)'];
+          return (
+            <div key={bar.start} className="absolute inset-0 z-[15] overflow-hidden text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif", background: tvBg }}>
+              <div className="tv-glow absolute left-1/2 top-[35%] h-[90vmin] w-[90vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#fbbf2430,transparent 65%)' }} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-[2.5vh] px-[6vw]">
+                <img src={logoSrc} alt="" className="tv-up h-[20vh] max-w-[55vw] object-contain drop-shadow-[0_12px_40px_rgba(0,0,0,.55)]" draggable={false} />
+                <div className="tv-up text-[3.4vh] font-extrabold uppercase tracking-[0.4em] text-amber-300" style={{ animationDelay: '.1s' }}>Marcador general</div>
+                <div className="grid w-full max-w-5xl gap-[1.4vh]">
+                  {rows.map((x, i) => {
+                    const pos = rk.indexOf(x) + 1;
+                    const medal = pos <= 3;
                     return (
-                      <div key={n} className="flex items-center gap-3 text-lg text-slate-300 md:text-2xl">
-                        <span className="w-12 text-right">{n} ★</span>
-                        <div className="h-4 flex-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-amber-400 transition-all duration-500" style={{ width: `${(c / state.vote.count) * 100}%` }} /></div>
-                        <span className="w-10 text-left">{c}</span>
+                      <div key={x.tableName} className="tv-up flex items-center gap-[2vw] rounded-2xl px-[2vw] py-[1.2vh] shadow-xl" style={{ animationDelay: `${0.15 + i * 0.12}s`, background: medal ? tile[pos - 1] : 'rgba(255,255,255,.09)', color: medal ? '#1a1208' : '#f1f5f9', outline: x.current ? '4px solid #fff' : 'none' }}>
+                        <span className="w-[7vh] text-[5vh] font-black leading-none">{pos}º</span>
+                        <span className="min-w-0 flex-1 truncate text-left text-[5vh] font-extrabold leading-tight">{x.tableName}</span>
+                        {x.current && gained > 0 && <span className="rounded-full bg-black/80 px-[1.4vw] py-[0.4vh] text-[3vh] font-black text-amber-300">+{gained}</span>}
+                        <span className="text-right text-[6vh] font-black leading-none tabular-nums">{x.points}<span className="ml-2 text-[2.8vh] font-bold opacity-70">pts</span></span>
                       </div>
                     );
                   })}
                 </div>
-              </>
-            ) : (
-              <div className="text-2xl text-slate-300 md:text-4xl">Vota desde tu celular: escanea el QR de tu mesa</div>
-            )}
-            {cur && <div className="mt-2 text-xl font-bold uppercase tracking-[0.25em] text-[#a9b8ff] md:text-3xl">{cur.auto ? 'Sigue la música' : `Sigue ${cur.tableName}`}</div>}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Interlude, fase 2: quien sigue y que va a cantar */}
+        {fallbackInterlude && armed && !blocked && cur && (
+          <div className="absolute inset-0 z-10 overflow-hidden bg-[#07080f] text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
+            <img src={bigImg} alt="" className="absolute inset-0 h-full w-full scale-125 object-cover opacity-30 blur-[100px]" draggable={false} />
+            <div className="tv-glow absolute left-1/2 top-[46%] h-[80vmin] w-[80vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#7c8cff40,transparent 65%)' }} />
+            <div key={cur.id} className="tv-up absolute inset-0 flex flex-col items-center justify-center gap-[3vh] px-[6vw] pb-[8vh]">
+              <div className="text-2xl font-bold uppercase tracking-[0.4em] text-[#a9b8ff] md:text-4xl">{cur.auto ? 'Sigue' : 'Sigue la mesa'}</div>
+              <div className="max-w-[88vw] truncate bg-gradient-to-b from-white to-[#c9d2ff] bg-clip-text pb-2 text-7xl font-black leading-tight tracking-tight text-transparent md:text-[9rem]">
+                {cur.auto ? 'La música de TONO' : cur.tableName}
+              </div>
+              {!cur.auto && (
+                <div className="flex max-w-[84vw] items-center gap-4 rounded-full border border-white/15 bg-white/[0.07] px-8 py-4 backdrop-blur-md">
+                  <svg viewBox="0 0 24 24" className="h-8 w-8 shrink-0 text-[#a9b8ff]" fill="currentColor" aria-hidden><path d="M9 18V5l12-2v13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+                  <span className="truncate text-3xl font-bold text-slate-100 md:text-5xl">{cur.title}</span>
+                </div>
+              )}
+              {state?.next && (
+                <div className="mt-2 max-w-[80vw] truncate text-xl text-slate-400 md:text-3xl">
+                  Después: <span className="text-slate-200">{state.next.auto ? 'La música de TONO' : `${state.next.tableName} · ${state.next.title}`}</span>
+                </div>
+              )}
+            </div>
+            <div className="absolute inset-x-0 bottom-[4.5vh] text-center text-xl font-semibold text-slate-300/80 md:text-2xl">
+              Pide tu canción desde tu mesa · <span className="font-bold text-[#a9c0ff]">escanea el QR</span>
+            </div>
           </div>
         )}
 
-        {(!armed || idle || blocked || fallbackInterlude) && (
+        {(!armed || idle || blocked) && (
           <div className="tv-idle absolute inset-0 z-10 flex flex-col items-center justify-center gap-7 overflow-hidden bg-[#05060a] p-8 text-center" style={{ fontFamily: "'Nunito', system-ui, sans-serif" }}>
             <div className="tv-glow pointer-events-none absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" style={{ background: 'radial-gradient(circle,#a9b8ff33,transparent 65%)' }} />
             <img src={logo ?? '/logo.png'} alt={state?.business?.name ?? 'TONO'} className="relative h-28 w-auto max-w-[60vw] object-contain md:h-40" draggable={false} />
@@ -394,7 +549,7 @@ export default function Tv() {
                 Iniciar transmisión
               </button>
             ) : blocked ? (
-              <button onClick={() => { playerRef.current?.playVideo(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
+              <button onClick={() => { unlockAudio(); playerRef.current?.playVideo(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
                 Pulsa para continuar
               </button>
             ) : cur && cur.id !== finishedId ? (
@@ -417,31 +572,28 @@ export default function Tv() {
         )}
       </div>
 
-      {/* Logo del local en las esquinas */}
-      {logo && (
-        <>
-          <img src={logo} alt="" className="pointer-events-none absolute left-3 top-3 z-[30] h-14 w-auto max-w-[14vw] object-contain opacity-80 md:h-20" draggable={false} />
-          <img src={logo} alt="" className="pointer-events-none absolute right-3 top-3 z-[30] h-14 w-auto max-w-[14vw] object-contain opacity-80 md:h-20" draggable={false} />
-        </>
-      )}
-
       {/* Barra de carga del aviso entre canciones */}
-      {bar && transition && (
+      {bar && transition && !votePhase && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[40] h-2 bg-white/15" aria-hidden>
           <div key={bar.start} className="tv-bar h-full" style={{ animationDuration: `${bar.ms}ms` }} />
         </div>
       )}
 
-      {/* Franja superior sobre el video (no tapa los controles de abajo) */}
-      {cur && (
-        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-6 bg-gradient-to-b from-black/80 to-transparent pb-10 pt-4 ${logo ? "px-28 md:px-40" : "px-8"}`}>
-          <div className="min-w-0">
-            <div className="truncate text-2xl font-bold drop-shadow">{cur.title}</div>
-            <div className="text-lg text-[#a9b8ff]">{cur.tableName}</div>
+      {/* Cabecera fija: logo del local, cancion y mesa a la izquierda; siguiente y marca TONO a la derecha */}
+      {cur && !transition && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-[11vh] min-h-[84px] items-center justify-between gap-6 px-[2.2vw]" style={{ fontFamily: "'Nunito', system-ui, sans-serif", background: tvBg }}>
+          <div className="flex min-w-0 items-center gap-5">
+            <img src={logoSrc} alt="" className="h-[7vh] max-h-16 min-h-[48px] w-auto max-w-[14vw] shrink-0 rounded-md bg-black object-contain" draggable={false} />
+            <div className="h-[6vh] w-px shrink-0 bg-white/15" />
+            <div className="min-w-0">
+              <div className="truncate text-3xl font-extrabold leading-tight text-white md:text-4xl">{cur.title}</div>
+            </div>
           </div>
-          <div className="min-w-0 text-right">
-            <div className="text-xs uppercase text-zinc-400">Siguiente</div>
-            <div className="truncate text-lg drop-shadow">{state?.next ? `${state.next.title} · ${state.next.tableName}` : 'Sin canciones en cola'}</div>
+          <div className="flex min-w-0 shrink-0 items-center gap-5">
+            {!cur.auto && cur.tableName && (
+              <span className="shrink-0 rounded-full bg-[#a9c0ff] px-7 py-2 text-3xl font-extrabold text-[#0b1030] md:text-4xl">{cur.tableName}</span>
+            )}
+            <img src="/favicon.png" alt="TONO" className="h-[7vh] max-h-14 min-h-[40px] w-auto rounded-xl opacity-90" draggable={false} />
           </div>
         </div>
       )}

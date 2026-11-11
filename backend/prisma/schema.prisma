@@ -94,6 +94,8 @@ model Business {
   // Modo votacion: tras cada cancion los asistentes la califican (1-5) y el resultado sale en el aviso de la TV
   voteMode           Boolean        @default(false)
   voteSec            Int            @default(15)
+  // SONG = puntaje por cancion; TABLE = acumulado por mesa en toda la sesion
+  voteScope          String         @default("SONG")
   // KARAOKE: busca versiones karaoke. ANY: cualquier video de musica.
   searchMode         SearchMode     @default(KARAOKE)
   searchProvider     SearchProvider @default(YOUTUBE)

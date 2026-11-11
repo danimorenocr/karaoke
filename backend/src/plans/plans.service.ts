@@ -11,7 +11,7 @@ export const FEATURES = [
   { id: 'designs', label: 'Diseños por mesa', hint: 'Elegir un diseño distinto al clásico para cada mesa' },
   { id: 'autoApprove', label: 'Aprobación automática', hint: 'Las canciones entran a la cola sin que el DJ las apruebe' },
   { id: 'searchAny', label: 'Buscar cualquier música', hint: 'Además del modo solo karaoke' },
-  { id: 'voting', label: 'Votación de canciones', hint: 'Los asistentes califican cada canción y el resultado sale en la TV' },
+  { id: 'voting', label: 'Modo competencia (votación)', hint: 'Cada actuación la califica el público desde el celular y el puntaje sale en vivo en la TV' },
   { id: 'autoDj', label: 'Auto-DJ', hint: 'Cola automática por géneros cuando no hay pedidos' },
 ] as const;
 export type FeatureId = (typeof FEATURES)[number]['id'];
