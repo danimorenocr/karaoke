@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Module, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Module, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { QueueModule } from '../queue/queue.module';
@@ -39,8 +40,22 @@ class PublicController {
 
   @Get('state')
   @Throttle({ default: { limit: 3000, ttl: 60_000 } })
-  state(@Param('token') token: string) {
-    return this.q.publicState(token);
+  state(@Param('token') token: string, @Query('img') img?: string) {
+    return this.q.publicState(token, img === 'url');
+  }
+
+  /** Logo del local como imagen (no dentro del JSON): el navegador lo guarda hasta que cambie la version (?v=). */
+  @Get('logo')
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  async logo(@Param('token') token: string, @Query('v') v: string | undefined, @Req() req: Request, @Res() res: Response) {
+    const l = await this.q.publicLogo(token);
+    const etag = `"logo-${l.v}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', v === String(l.v) ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (req.headers['if-none-match'] === etag) return res.status(304).end();
+    res.setHeader('Content-Type', l.mime);
+    res.send(l.buf);
   }
 
   /** Busqueda segun la configuracion del bar (solo karaoke o cualquier musica). */

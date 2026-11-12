@@ -78,8 +78,10 @@ export default function Dj() {
       if (name === 'disconnect') setOnline(false);
       if (name === 'tv.status') setTvConnected(payload.connected);
     });
-    const poll = setInterval(load, 20000);
-    return () => { off(); clearInterval(poll); };
+    const poll = setInterval(() => { if (!document.hidden) load(); }, 20000); // respaldo; con la pestana oculta no consulta
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { off(); clearInterval(poll); document.removeEventListener('visibilitychange', onVisible); };
   }, [load]);
 
   // Pantalla de carga: si la accion tarda mas de 0,3 s se bloquea la pantalla con un aviso (evita doble clic y la sensacion de que se trabo)

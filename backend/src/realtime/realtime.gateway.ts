@@ -105,9 +105,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
 @Injectable()
 export class RealtimeService {
+  private listeners: ((businessId: string) => void)[] = [];
   constructor(private gw: RealtimeGateway) {}
+  /** Quien guarda estados en memoria se entera de cada cambio antes de que los clientes vuelvan a pedirlos. */
+  onChange(fn: (businessId: string) => void) {
+    this.listeners.push(fn);
+  }
   /** Cambio en cola/solicitudes/sesion: los clientes vuelven a pedir el estado. */
   queueUpdated(businessId: string) {
+    this.listeners.forEach((fn) => fn(businessId));
     this.gw.emit(businessId, 'queue.updated');
   }
   /** Control de reproduccion para la TV (pausa/reanudar/recargar el video actual). */

@@ -29,9 +29,27 @@ function cleanTitle(title: string): string {
 export class StatsService {
   constructor(private prisma: PrismaService) {}
 
+  /** Resumenes ya calculados por local/rango/zona/dia: los mira mucha gente o el mismo panel cada minuto, y recalcular lee hasta 50.000 eventos. */
+  private cache = new Map<string, { at: number; ttl: number; p: Promise<Awaited<ReturnType<StatsService['computeFresh']>>> }>();
+
+  /** Dias ya cerrados no cambian (5 min por si se corrige algo); los que incluyen "ahora" duran 45 s. */
+  compute(businessId: string | undefined, range: Range, tzOffsetMin: number, day?: string) {
+    const key = `${businessId ?? 'all'}|${range}|${tzOffsetMin}|${range === 'day' ? day ?? '' : ''}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < hit.ttl) return hit.p;
+    const e = { at: Date.now(), ttl: 45_000, p: this.computeFresh(businessId, range, tzOffsetMin, day) };
+    this.cache.set(key, e);
+    e.p.then((r) => { e.ttl = r.to && r.to.getTime() <= Date.now() ? 300_000 : 45_000; }, () => { if (this.cache.get(key) === e) this.cache.delete(key); });
+    if (this.cache.size > 100) {
+      for (const [k, v] of this.cache) if (Date.now() - v.at >= v.ttl) this.cache.delete(k);
+      for (const k of this.cache.keys()) { if (this.cache.size <= 100) break; this.cache.delete(k); }
+    }
+    return e.p;
+  }
+
   /** `tzOffsetMin` = new Date().getTimezoneOffset() del navegador (Colombia: 300). */
   /** `businessId` indefinido = todos los establecimientos (super admin). */
-  async compute(businessId: string | undefined, range: Range, tzOffsetMin: number, day?: string) {
+  async computeFresh(businessId: string | undefined, range: Range, tzOffsetMin: number, day?: string) {
     const now = Date.now();
     const localNow = now - tzOffsetMin * 60_000;
     const localMidnight = Math.floor(localNow / DAY) * DAY;
