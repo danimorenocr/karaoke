@@ -87,7 +87,7 @@ export default function StatsPanel({ path = '/admin/stats' }: { path?: string })
         .catch((e) => !dead && setError(e.message));
     setS(null);
     load();
-    const t = setInterval(load, 30_000); // se refresca solo mientras el dueno mira el tablero
+    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000); // se refresca solo mientras el dueno mira el tablero (el servidor guarda el resumen 45 s)
     return () => { dead = true; clearInterval(t); };
   }, [range, path, day]);
 
