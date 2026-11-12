@@ -1,6 +1,6 @@
 import { KARAOKE_RE, YoutubeService } from '../youtube/youtube.service';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AutoDjMode, Prisma, RequestStatus, SongRequest } from '@prisma/client';
+import { AutoDjMode, Business, Prisma, RequestStatus, SongRequest } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { allowedExperiences } from '../experiences';
 import { RealtimeService } from '../realtime/realtime.gateway';
@@ -34,6 +34,13 @@ const SCORE_SEC = 6; // modo acumulado por mesa: segundos que se muestra el marc
 const ytThumb = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED'];
 
+/** Business sin las dos imagenes en base64 (logo y banner), que pesan mucho y casi nunca se necesitan al armar un estado. */
+const BIZ_LITE = Object.fromEntries(Object.keys(Prisma.BusinessScalarFieldEnum).filter((k) => k !== 'logoUrl' && k !== 'tvBanner').map((k) => [k, true])) as Prisma.BusinessSelect;
+type BizLite = Omit<Business, 'logoUrl' | 'tvBanner'> & { hasLogo: boolean; hasBanner: boolean };
+/** Estado publico compartido por todas las mesas de un local: se arma una vez y se reutiliza hasta que algo cambie. */
+const PUB_TTL = 5_000; // tope de antiguedad aunque nadie avise (suspensiones, cambios de plan, etc.)
+interface Memo<T> { ver: number; at: number; p: Promise<T> }
+
 /**
  * Toda la logica de sesion/cola/reproduccion. El backend decide que suena; la TV solo ejecuta.
  * Cada mutacion toma un lock por establecimiento, asi dos eventos simultaneos
@@ -41,7 +48,57 @@ const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED
  */
 @Injectable()
 export class QueueService {
-  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService) {}
+  /** Sube con cada cambio de cola/solicitudes/votos/ajustes (RealtimeService.queueUpdated): invalida los estados guardados. */
+  private gver = 0;
+  private pubShared = new Map<string, Memo<any>>();
+  private pubTables = new Map<string, Memo<any>>();
+  private logos = new Map<string, { v: number; mime: string; buf: Buffer }>();
+  private static LOGO_CACHE_BYTES = 16 * 1024 * 1024; // tope total de logos en memoria
+
+  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService) {
+    this.rt.onChange(() => { this.gver++; });
+  }
+
+  /** Una sola carga en vuelo por clave y reutilizada mientras no cambie nada. Los errores no se guardan. */
+  private memo<T>(map: Map<string, Memo<T>>, key: string, load: () => Promise<T>): Promise<T> {
+    const hit = map.get(key);
+    if (hit && hit.ver === this.gver && Date.now() - hit.at < PUB_TTL) return hit.p;
+    const e: Memo<T> = { ver: this.gver, at: Date.now(), p: load() };
+    map.set(key, e);
+    e.p.catch(() => { if (map.get(key) === e) map.delete(key); });
+    if (map.size > 300) {
+      for (const [k, v] of map) if (v.ver !== this.gver || Date.now() - v.at >= PUB_TTL) map.delete(k);
+      // Tope duro: si aun asi hay demasiadas, se descartan las mas antiguas (el Map conserva el orden de insercion)
+      for (const k of map.keys()) { if (map.size <= 300) break; map.delete(k); }
+    }
+    return e.p;
+  }
+
+  /** Local sin logo ni banner en memoria; hasLogo/hasBanner salen de una consulta minima (no se lee el base64). */
+  private async bizLite(businessId: string): Promise<BizLite> {
+    const [b, flags] = await Promise.all([
+      this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: BIZ_LITE }),
+      this.prisma.$queryRaw<{ l: boolean; b: boolean }[]>`SELECT ("logoUrl" IS NOT NULL) AS l, ("tvBanner" IS NOT NULL) AS b FROM "Business" WHERE id = ${businessId}`,
+    ]);
+    return { ...(b as unknown as Omit<Business, 'logoUrl' | 'tvBanner'>), hasLogo: !!flags[0]?.l, hasBanner: !!flags[0]?.b };
+  }
+
+  /** Logo decodificado y guardado por version (logoAt): se lee de la BD una vez, no en cada estado. */
+  private async logoOf(businessId: string, logoAt: Date | null) {
+    const v = logoAt?.getTime() ?? 0;
+    const hit = this.logos.get(businessId);
+    if (hit && hit.v === v) return hit;
+    const b = await this.prisma.business.findUnique({ where: { id: businessId }, select: { logoUrl: true } });
+    const m = /^data:(image\/(?:png|jpe?g|webp));base64,(.*)$/s.exec(b?.logoUrl ?? '');
+    if (!m) return null;
+    const entry = { v, mime: m[1], buf: Buffer.from(m[2], 'base64') };
+    this.logos.delete(businessId);
+    this.logos.set(businessId, entry);
+    let total = 0;
+    for (const e of this.logos.values()) total += e.buf.length;
+    for (const k of this.logos.keys()) { if (total <= QueueService.LOGO_CACHE_BYTES || this.logos.size <= 1) break; total -= this.logos.get(k)!.buf.length; this.logos.delete(k); }
+    return entry;
+  }
 
   // ---------- helpers ----------
 
@@ -213,17 +270,22 @@ export class QueueService {
     };
   }
 
+  /** Datos del local que ven el panel DJ y la TV (la TV usa las marcas de version para pedir logo y banner solo si cambian). */
+  private businessView(business: BizLite, f: Set<string>) {
+    return { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') && business.hasBanner ? (business.tvBannerAt ?? new Date(0)) : null, primaryColor: f.has('branding') ? business.primaryColor : null, logoAt: f.has('branding') && business.hasLogo ? (business.logoAt ?? new Date(0)) : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec + (business.voteScope === 'TABLE' ? SCORE_SEC : 0) + NEXT_UP_SEC : 0), voteMode: business.voteMode && f.has('voting'), voteSec: business.voteMode && f.has('voting') ? business.voteSec : null, voteScope: business.voteScope, scoreSec: business.voteMode && f.has('voting') && business.voteScope === 'TABLE' ? SCORE_SEC : 0, features: [...f] };
+  }
+
   // ---------- estados (lectura) ----------
 
   async djState(businessId: string) {
     const session = await this.activeSession(this.prisma, businessId);
-    const business = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId } });
+    const business = await this.bizLite(businessId);
     // TV conectada = socket abierto en esta instancia O latido reciente guardado en BD (sirve tras reinicios o con varias instancias)
     const tvConnected = this.rt.tvCount(businessId) > 0 || (!!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000);
     // tvArmed: la TV ya pulso "Iniciar karaoke" y sigue enviando latidos (la pagina esta abierta Y reproduciendo)
     const tvArmed = !!session?.tvLastSeenAt && Date.now() - session.tvLastSeenAt.getTime() < 20_000;
     const f = await this.plans.of(businessId);
-    const base = { business: { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') && business.tvBanner ? (business.tvBannerAt ?? new Date(0)) : null, primaryColor: f.has('branding') ? business.primaryColor : null, logoAt: f.has('branding') && business.logoUrl ? (business.logoAt ?? new Date(0)) : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec + (business.voteScope === 'TABLE' ? SCORE_SEC : 0) + NEXT_UP_SEC : 0), voteMode: business.voteMode && f.has('voting'), voteSec: business.voteMode && f.has('voting') ? business.voteSec : null, voteScope: business.voteScope, scoreSec: business.voteMode && f.has('voting') && business.voteScope === 'TABLE' ? SCORE_SEC : 0, features: [...f] }, tvConnected, tvArmed };
+    const base = { business: this.businessView(business, f), tvConnected, tvArmed };
     if (!session) return { ...base, session: null, current: null, queue: [], autoQueue: [], pending: [], history: [], tables: [] };
 
     const include = { table: { select: { name: true } } };
@@ -262,17 +324,26 @@ export class QueueService {
     };
   }
 
-  /** Estado para la TV: lo minimo para reproducir. */
+  /** Estado para la TV: lo minimo para reproducir (cancion actual, siguiente y las proximas 5), sin armar el panel completo del DJ. */
   async playerState(businessId: string) {
-    const s = await this.djState(businessId);
-    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { id: true, voteMode: true, voteSec: true, voteScope: true } });
+    const [session, business, f] = await Promise.all([this.activeSession(this.prisma, businessId), this.bizLite(businessId), this.plans.of(businessId)]);
+    const view = this.businessView(business, f);
+    const vote = await this.lastVote(business, f);
+    if (!session) return { vote, business: view, session: null, current: null, next: null, upcoming: [] };
+    const include = { table: { select: { name: true } } };
+    const [current, queue, autoQueue] = await Promise.all([
+      this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED', auto: false }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }], take: 5 }),
+      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED', auto: true }, include, orderBy: { position: 'asc' }, take: 5 }),
+    ]);
+    const upcoming = [...queue, ...autoQueue].slice(0, 5).map((r) => this.view(r));
     return {
-      vote: await this.lastVote(b, await this.plans.of(businessId)),
-      business: s.business,
-      session: s.session,
-      current: s.current,
-      next: s.queue[0] ?? s.autoQueue[0] ?? null,
-      upcoming: [...s.queue, ...s.autoQueue].slice(0, 5),
+      vote,
+      business: view,
+      session: { id: session.id, requestsOpen: session.requestsOpen, paused: session.paused, tvStarted: session.tvStarted, positionSec: session.positionSec, startedAt: session.startedAt },
+      current: current && this.view(current),
+      next: upcoming[0] ?? null,
+      upcoming,
     };
   }
 
@@ -286,42 +357,87 @@ export class QueueService {
     return { logo: (await this.plans.has(businessId, 'branding')) ? b.logoUrl : null };
   }
 
-  async publicState(tableToken: string) {
-    const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
-    if (!table || !table.active || table.business.status !== 'ACTIVE') {
-      throw new NotFoundException('Este codigo QR no es valido');
+  /** Parte del estado publico igual para todas las mesas de un local. */
+  private sharedPublic(businessId: string) {
+    return this.memo(this.pubShared, businessId, async () => {
+      const [b, f, session] = await Promise.all([this.bizLite(businessId), this.plans.of(businessId), this.activeSession(this.prisma, businessId)]);
+      let current: any = null;
+      let queue: any[] = [];
+      if (session) {
+        const include = { table: { select: { name: true } } };
+        const [c, q] = await Promise.all([
+          this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
+          this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED', auto: false }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
+        ]);
+        current = c && this.view(c);
+        queue = q.map((r) => this.view(r));
+      }
+      const vote = await this.lastVoteRaw(b, f);
+      const branding = f.has('branding');
+      return {
+        b, session: session ? { id: session.id, open: session.requestsOpen } : null, current, queue, vote,
+        name: b.name, color: branding ? b.primaryColor : DEFAULT_COLOR, logoAt: branding && b.hasLogo ? b.logoAt : null, hasLogo: branding && b.hasLogo,
+        searchMode: f.has('searchAny') ? b.searchMode : 'KARAOKE', designs: f.has('designs'), maxPending: b.maxPendingPerTable,
+      };
+    });
+  }
+
+  /** Mesa por QR y lo que pidio (por mesa; se comparte entre los celulares de la misma mesa). */
+  private tablePublic(tableToken: string) {
+    return this.memo(this.pubTables, tableToken, async () => {
+      const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: { select: { id: true, status: true } } } });
+      if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
+      const sh = await this.sharedPublic(table.businessId);
+      let mine: any[] = [];
+      if (sh.session) {
+        const rows = await this.prisma.songRequest.findMany({
+          // Tras "desvincular", la mesa empieza de cero: no ve lo pedido antes
+          where: { sessionId: sh.session.id, tableId: table.id, ...(table.historyClearedAt ? { requestedAt: { gt: table.historyClearedAt } } : {}) },
+          include: { table: { select: { name: true } } },
+          orderBy: { requestedAt: 'desc' },
+          take: 20,
+        });
+        mine = rows.map((r) => this.view(r));
+      }
+      return { table: { id: table.id, name: table.name, experienceId: table.experienceId, businessId: table.businessId }, mine };
+    });
+  }
+
+  /** `imgAsUrl`: el logo va como direccion versionada (/public/:token/logo?v=) en vez de incrustado en cada respuesta. */
+  async publicState(tableToken: string, imgAsUrl = false) {
+    const t = await this.tablePublic(tableToken);
+    let sh = await this.sharedPublic(t.table.businessId);
+    // La votacion tiene vigencia propia: pasada, se recalcula sin esperar a otro cambio
+    if (sh.vote && Date.now() >= sh.vote.end) {
+      this.pubShared.delete(t.table.businessId);
+      sh = await this.sharedPublic(t.table.businessId);
     }
-    const b = table.business;
-    const session = await this.activeSession(this.prisma, b.id);
-    const f = await this.plans.of(b.id);
-    const out = {
-      business: { name: b.name, logoUrl: f.has('branding') ? b.logoUrl : null, primaryColor: f.has('branding') ? b.primaryColor : DEFAULT_COLOR, searchMode: f.has('searchAny') ? b.searchMode : 'KARAOKE' },
-      table: { name: table.name, experienceId: f.has('designs') && allowedExperiences(b.allowedExperiences).includes(table.experienceId) ? table.experienceId : 'classic' },
-      session: session ? { open: session.requestsOpen } : null,
-      maxPending: b.maxPendingPerTable,
-      current: null as any,
-      queue: [] as any[],
-      mine: [] as any[],
-      vote: await this.lastVote(b, f, table.id),
+    let logoUrl: string | null = null;
+    if (sh.hasLogo) {
+      if (imgAsUrl) logoUrl = `/public/${tableToken}/logo?v=${sh.logoAt?.getTime() ?? 0}`;
+      else { const lg = await this.logoOf(t.table.businessId, sh.logoAt); logoUrl = lg ? `data:${lg.mime};base64,${lg.buf.toString('base64')}` : null; }
+    }
+    const exp = sh.designs && allowedExperiences(sh.b.allowedExperiences).includes(t.table.experienceId) ? t.table.experienceId : 'classic';
+    const v = sh.vote;
+    return {
+      business: { name: sh.name, logoUrl, primaryColor: sh.color, searchMode: sh.searchMode },
+      table: { name: t.table.name, experienceId: exp },
+      session: sh.session ? { open: sh.session.open } : null,
+      maxPending: sh.maxPending,
+      current: sh.current,
+      queue: sh.queue,
+      mine: t.mine,
+      vote: v ? { ...v.out, mine: v.tableId === t.table.id, leftMs: Math.max(0, v.end - Date.now()) } : null,
     };
-    if (!session) return out;
-    const include = { table: { select: { name: true } } };
-    const [current, queue, mine] = await Promise.all([
-      this.prisma.songRequest.findFirst({ where: { sessionId: session.id, status: 'PLAYING' }, include }),
-      this.prisma.songRequest.findMany({ where: { sessionId: session.id, status: 'APPROVED', auto: false }, include, orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }] }),
-      this.prisma.songRequest.findMany({
-        // Tras "desvincular", la mesa empieza de cero: no ve lo pedido antes
-        where: { sessionId: session.id, tableId: table.id, ...(table.historyClearedAt ? { requestedAt: { gt: table.historyClearedAt } } : {}) },
-        include,
-        orderBy: { requestedAt: 'desc' },
-        take: 20,
-      }),
-    ]);
-    // El cliente no necesita saber la razon interna ni ids de otras mesas; solo nombre de mesa.
-    out.current = current && this.view(current);
-    out.queue = queue.map((r) => this.view(r));
-    out.mine = mine.map((r) => this.view(r));
-    return out;
+  }
+
+  /** Logo publico de la mesa (para <img>): cacheable un anio porque la direccion lleva la version. */
+  async publicLogo(tableToken: string) {
+    const t = await this.tablePublic(tableToken);
+    const sh = await this.sharedPublic(t.table.businessId);
+    const logo = sh.hasLogo ? await this.logoOf(t.table.businessId, sh.logoAt) : null;
+    if (!logo) throw new NotFoundException('Sin logo');
+    return { mime: logo.mime, buf: logo.buf, v: logo.v };
   }
 
   // ---------- votacion ----------
@@ -333,6 +449,12 @@ export class QueueService {
 
   /** Resultado de la votacion de la ultima cancion terminada, mientras siga abierta (null si el modo esta apagado o no hay). */
   async lastVote(b: { id: string; voteMode: boolean; voteSec: number; voteScope: string }, feats: Set<string>, tableId?: string) {
+    const v = await this.lastVoteRaw(b, feats);
+    return v && { ...v.out, mine: !!tableId && v.tableId === tableId, leftMs: Math.max(0, v.end - Date.now()) };
+  }
+
+  /** Igual para todos los espectadores: `end` (hora de cierre) y `tableId` (mesa que canto) permiten calcular mine/leftMs despues. */
+  async lastVoteRaw(b: { id: string; voteMode: boolean; voteSec: number; voteScope: string }, feats: Set<string>) {
     if (!b.voteMode || !feats.has('voting')) return null;
     const r = await this.prisma.songRequest.findFirst({
       where: { businessId: b.id, status: 'COMPLETED', auto: false, completedAt: { gte: new Date(Date.now() - this.voteWindowMs(b.voteSec)) } },
@@ -361,7 +483,7 @@ export class QueueService {
         .map(([id, t]) => ({ tableName: names.get(id) ?? '—', points: t.points, votes: t.votes, avg: t.votes ? Math.round((t.points / t.votes) * 10) / 10 : 0, songs: t.songs.size, current: id === r.tableId }))
         .sort((x, y) => y.points - x.points || y.avg - x.avg);
     }
-    return { scope: b.voteScope, ranking, id: r.id, title: r.title, tableName: r.auto || !r.table ? null : r.table.name, auto: r.auto, mine: !!tableId && r.tableId === tableId, count, avg, dist, sec: b.voteSec, leftMs: Math.max(0, r.completedAt!.getTime() + this.voteWindowMs(b.voteSec) - Date.now()) };
+    return { tableId: r.tableId, end: r.completedAt!.getTime() + this.voteWindowMs(b.voteSec), out: { scope: b.voteScope, ranking, id: r.id, title: r.title, tableName: r.auto || !r.table ? null : r.table.name, auto: r.auto, count, avg, dist, sec: b.voteSec } };
   }
 
   /** Un asistente vota (1-5) la cancion que acaba de sonar. Un voto por navegador: votar de nuevo lo cambia. */
