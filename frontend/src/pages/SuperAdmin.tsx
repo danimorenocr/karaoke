@@ -219,6 +219,39 @@ function AccountsDialog({ b, onClose, run, toast }: { b: any; onClose: () => voi
   );
 }
 
+
+/** Resumen: solicitudes (canciones pedidas) por establecimiento, de mayor a menor. */
+function RequestsByBusiness({ list }: { list: any[] | null }) {
+  const rows = [...(list ?? [])].sort((a, b) => b._count.requests - a._count.requests);
+  const max = rows.reduce((n, b) => Math.max(n, b._count.requests), 0);
+  const dot = (b: any) =>
+    b.status === 'ACTIVE' ? 'bg-emerald-400' : b.status === 'PAYMENT_REVIEW' ? 'bg-indigo-300' : b.status === 'PENDING_PAYMENT' ? 'bg-amber-400' : 'bg-red-500';
+  const state = (b: any) =>
+    b.status === 'ACTIVE' ? 'Activo' : b.status === 'PAYMENT_REVIEW' ? 'Pago por revisar' : b.status === 'PENDING_PAYMENT' ? 'Pago pendiente' : 'Suspendido';
+  return (
+    <Card title="Solicitudes por establecimiento" className="mb-6">
+      {!list ? (
+        <Empty>Cargando...</Empty>
+      ) : rows.length === 0 ? (
+        <Empty>Aún no hay establecimientos.</Empty>
+      ) : (
+        <ul className="divide-y divide-white/[0.07]">
+          {rows.map((b) => (
+            <li key={b.id} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dot(b)}`} title={state(b)} />
+              <span className="min-w-0 flex-1 truncate font-medium">{b.name}</span>
+              <span className="hidden h-2 w-40 shrink-0 overflow-hidden rounded-full bg-white/[0.06] sm:block" aria-hidden>
+                <span className="block h-full rounded-full" style={{ width: max ? `${Math.max(3, Math.round((b._count.requests / max) * 100))}%` : 0, background: ACCENT }} />
+              </span>
+              <span className="w-16 shrink-0 text-right text-lg font-bold">{b._count.requests}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 export default function SuperAdmin() {
   const [tab, setTab] = useState<Tab>('overview');
   const [list, setList] = useState<any[] | null>(null);
@@ -254,6 +287,7 @@ export default function SuperAdmin() {
             <Stat label="Usuarios" value={sum('users')} />
             <Stat label="Solicitudes" value={sum('requests')} />
           </div>
+          <RequestsByBusiness list={list} />
           <Health />
         </>
       )}
