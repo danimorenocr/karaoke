@@ -65,12 +65,14 @@ class UpdateBusinessDto {
 }
 class TableDto {
   @IsString() @MinLength(1) @MaxLength(40) name: string;
+  @IsOptional() @IsIn([...EXPERIENCE_IDS]) experienceId?: string;
 }
 class BulkTablesDto {
   // Las mesas se llaman "<prefijo> <numero>", desde `from` y `count` seguidas
   @IsString() @MinLength(1) @MaxLength(30) prefix: string;
   @IsInt() @Min(0) @Max(9999) from: number;
   @IsInt() @Min(1) @Max(100) count: number;
+  @IsOptional() @IsIn([...EXPERIENCE_IDS]) experienceId?: string;
 }
 class DeleteTablesDto {
   @IsArray() @IsString({ each: true }) @ArrayMaxSize(500) ids: string[];
@@ -270,18 +272,29 @@ class AdminService {
     return this.prisma.table.findMany({ where: { businessId }, orderBy: { createdAt: 'asc' } });
   }
 
-  createTable(businessId: string, dto: TableDto) {
-    return this.prisma.table.create({ data: { businessId, name: dto.name, qrToken: newToken() } });
+  /** Un diseno distinto al clasico exige la funcion "designs" del plan y que el bar lo tenga habilitado. */
+  private async checkExperience(businessId: string, experienceId?: string) {
+    if (!experienceId) return 'classic';
+    if (experienceId !== 'classic') await this.plans.require(businessId, 'designs');
+    const biz = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { allowedExperiences: true } });
+    if (!allowedExperiences(biz.allowedExperiences).includes(experienceId)) throw new ForbiddenException('Ese diseno no esta habilitado para tu establecimiento');
+    return experienceId;
+  }
+
+  async createTable(businessId: string, dto: TableDto) {
+    const experienceId = await this.checkExperience(businessId, dto.experienceId);
+    return this.prisma.table.create({ data: { businessId, name: dto.name, qrToken: newToken(), experienceId } });
   }
 
   /** Crea varias mesas de una vez; omite las que ya existen con el mismo nombre. */
   async createTablesBulk(businessId: string, dto: BulkTablesDto) {
+    const experienceId = await this.checkExperience(businessId, dto.experienceId);
     const prefix = dto.prefix.trim();
     const names = Array.from({ length: dto.count }, (_, i) => `${prefix} ${dto.from + i}`.slice(0, 40));
     const existing = new Set((await this.prisma.table.findMany({ where: { businessId }, select: { name: true } })).map((t) => t.name.toLowerCase()));
     const fresh = names.filter((n) => !existing.has(n.toLowerCase()));
     if (existing.size + fresh.length > 500) throw new ConflictException('Un establecimiento puede tener hasta 500 mesas');
-    if (fresh.length) await this.prisma.table.createMany({ data: fresh.map((name) => ({ businessId, name, qrToken: newToken() })) });
+    if (fresh.length) await this.prisma.table.createMany({ data: fresh.map((name) => ({ businessId, name, qrToken: newToken(), experienceId })) });
     return { created: fresh.length, skipped: names.length - fresh.length };
   }
 
@@ -300,11 +313,7 @@ class AdminService {
 
   async updateTable(businessId: string, id: string, dto: UpdateTableDto) {
     await this.ownedTable(businessId, id);
-    if (dto.experienceId && dto.experienceId !== 'classic') await this.plans.require(businessId, 'designs');
-    if (dto.experienceId) {
-      const biz = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { allowedExperiences: true } });
-      if (!allowedExperiences(biz.allowedExperiences).includes(dto.experienceId)) throw new ForbiddenException('Ese diseno no esta habilitado para tu establecimiento');
-    }
+    if (dto.experienceId) await this.checkExperience(businessId, dto.experienceId);
     const t = await this.prisma.table.update({ where: { id }, data: dto });
     this.rt.queueUpdated(businessId);
     return t;

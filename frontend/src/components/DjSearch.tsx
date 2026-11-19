@@ -66,13 +66,13 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
     return () => clearTimeout(t);
   }, [q]);
 
-  const add = async (s: { videoId: string; title: string; channelTitle?: string; thumbnail?: string; durationSec?: number }) => {
+  const add = async (s: { videoId: string; title: string; channelTitle?: string; thumbnail?: string; durationSec?: number; source?: string }) => {
     if (!tableId) return toast('Crea al menos una mesa para poder agregar canciones', true);
     setBusy(s.videoId);
     setAdding(s.title);
     try {
       await api('POST', '/dj/requests', {
-        tableId, videoId: s.videoId, title: s.title, channel: s.channelTitle || undefined, thumbnail: s.thumbnail || undefined, durationSec: s.durationSec,
+        tableId, videoId: s.videoId, title: s.title, channel: s.channelTitle || undefined, thumbnail: s.thumbnail || undefined, durationSec: s.durationSec, source: s.source === 'LOCAL' ? 'LOCAL' : undefined,
       });
       toast(`Agregada a la cola: ${s.title}`);
       // Buscador limpio para la siguiente
@@ -104,7 +104,7 @@ export default function DjSearch({ tables, mode, onAdded, toast }: Props) {
     }
   };
 
-  const shown = sort === 'views' ? [...results].sort((a, b) => Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1)) : results;
+  const shown = sort === 'views' ? [...results].sort((a, b) => Number(b.source === 'LOCAL') - Number(a.source === 'LOCAL') || Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1)) : results;
 
   return (
     <Card

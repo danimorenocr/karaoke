@@ -20,12 +20,13 @@ const STATUS: Record<string, ['slate' | 'green' | 'red' | 'amber' | 'teal', stri
   FAILED: ['red', 'Falló'],
 };
 
-type Tab = 'stats' | 'tables' | 'settings' | 'staff' | 'history';
+type Tab = 'stats' | 'tables' | 'settings' | 'library' | 'staff' | 'history';
 
 const NAV: (NavItem & { feature?: string })[] = [
   { id: 'stats', label: 'Dashboard', icon: 'home', feature: 'stats' },
   { id: 'tables', label: 'Mesas y QR', icon: 'qr' },
   { id: 'settings', label: 'Configuración', icon: 'gear' },
+  { id: 'library', label: 'Biblioteca local', icon: 'music', feature: 'localLibrary' },
   { id: 'staff', label: 'Equipo', icon: 'users', feature: 'staff' },
   { id: 'history', label: 'Historial', icon: 'history', feature: 'history' },
 ];
@@ -34,6 +35,7 @@ const HERO: Record<Tab, [string, string]> = {
   stats: ['Dashboard', 'Mide cómo se vive el karaoke en tu negocio.'],
   tables: ['Mesas y QR', 'Gestiona las mesas, personaliza sus experiencias y descarga sus códigos QR.'],
   settings: ['Configuración', 'Identidad del bar y reglas para las solicitudes de canciones.'],
+  library: ['Biblioteca local', 'Videos guardados en el PC del bar: se buscan primero, antes que en YouTube.'],
   staff: ['Equipo', 'Crea cuentas para tus DJs y gestiona su acceso.'],
   history: ['Historial', 'Las últimas 200 solicitudes de tu negocio.'],
 };
@@ -199,6 +201,33 @@ function TableCard({ t, onDetails, selecting = false, selected = false }: { t: a
   );
 }
 
+/** Cuadricula para elegir el diseno (experiencia) que veran los clientes de la mesa. */
+function ExperiencePicker({ value, allowed, onPick }: { value: string; allowed: string[]; onPick: (id: string) => void }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {EXPERIENCES.filter((x) => allowed.length === 0 || x.id === 'classic' || allowed.includes(x.id)).map((x) => {
+        const on = x.id === value;
+        return (
+          <button
+            key={x.id}
+            type="button"
+            onClick={() => !on && onPick(x.id)}
+            className="flex items-center gap-3 rounded-xl border p-3 text-left transition hover:bg-white/5"
+            style={on ? { borderColor: ACCENT, background: ACCENT + '14' } : { borderColor: 'rgba(255,255,255,.1)' }}
+            aria-pressed={on}
+          >
+            <span className="h-10 w-10 shrink-0 rounded-lg border border-white/10" style={{ background: `linear-gradient(135deg, ${x.swatch[0]} 50%, ${x.swatch[1]} 50%)` }} />
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">{x.name}</span>
+              <span className="block text-[11px] leading-tight text-slate-400">{x.description}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function TableDetails({ t, allowed, onClose, onPatch, onRotate, onDelete }: { t: any; allowed: string[]; onClose: () => void; onPatch: (d: any, ok?: string) => Promise<void>; onRotate: () => void; onDelete: () => void }) {
   return (
     <Dialog title="Detalles de la mesa" onClose={onClose} wide>
@@ -220,26 +249,7 @@ function TableDetails({ t, allowed, onClose, onPatch, onRotate, onDelete }: { t:
 
           <div>
             <div className="mb-2 text-xs uppercase tracking-wider text-slate-400">Experiencia (diseño que ven los clientes)</div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {EXPERIENCES.filter((x) => allowed.length === 0 || x.id === 'classic' || allowed.includes(x.id)).map((x) => {
-                const on = x.id === t.experienceId;
-                return (
-                  <button
-                    key={x.id}
-                    onClick={() => !on && onPatch({ experienceId: x.id }, 'Diseño actualizado')}
-                    className="flex items-center gap-3 rounded-xl border p-3 text-left transition hover:bg-white/5"
-                    style={on ? { borderColor: ACCENT, background: ACCENT + '14' } : { borderColor: 'rgba(255,255,255,.1)' }}
-                    aria-pressed={on}
-                  >
-                    <span className="h-10 w-10 shrink-0 rounded-lg border border-white/10" style={{ background: `linear-gradient(135deg, ${x.swatch[0]} 50%, ${x.swatch[1]} 50%)` }} />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold">{x.name}</span>
-                      <span className="block text-[11px] leading-tight text-slate-400">{x.description}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <ExperiencePicker value={t.experienceId} allowed={allowed} onPick={(id) => onPatch({ experienceId: id }, 'Diseño actualizado')} />
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-white/10 pt-4">
@@ -257,8 +267,8 @@ function TablesView({ tables, allowed, bizName, onCreate, onCreateBulk, onDelete
   tables: any[];
   allowed: string[];
   bizName: string;
-  onCreateBulk: (d: { prefix: string; from: number; count: number }) => Promise<void>;
-  onCreate: (name: string) => Promise<void>;
+  onCreateBulk: (d: { prefix: string; from: number; count: number; experienceId: string }) => Promise<void>;
+  onCreate: (name: string, experienceId: string) => Promise<void>;
   onDelete: (ids: string[]) => Promise<void>;
   onPatch: (id: string, d: any, ok?: string) => Promise<void>;
   onRotate: (t: any) => void;
@@ -271,6 +281,14 @@ function TablesView({ tables, allowed, bizName, onCreate, onCreateBulk, onDelete
   const [confirmDel, setConfirmDel] = useState<string[] | null>(null);
   const [delBusy, setDelBusy] = useState(false);
   const [bulkF, setBulkF] = useState({ prefix: 'Mesa', from: 1, count: 10 });
+  const [exp, setExp] = useState('classic'); // diseno con el que se crean las mesas nuevas
+  const choices = EXPERIENCES.filter((x) => allowed.length === 0 || x.id === 'classic' || allowed.includes(x.id));
+  const design = (
+    <div>
+      <div className="mb-2 text-xs uppercase tracking-wider text-slate-400">Diseño de las mesas nuevas</div>
+      <ExperiencePicker value={exp} allowed={allowed} onPick={setExp} />
+    </div>
+  );
   const [openId, setOpenId] = useState<string | null>(null);
 
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -352,12 +370,13 @@ function TablesView({ tables, allowed, bizName, onCreate, onCreateBulk, onDelete
             ))}
           </div>
           {!bulk ? (
-            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreate(name); setName(''); setCreating(false); }}>
+            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreate(name, exp); setName(''); setCreating(false); }}>
               <Field label="Nombre" placeholder="Ej. Mesa 5" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required autoFocus />
+              {choices.length > 1 && design}
               <Btn kind="accent" className="py-3">Crear mesa</Btn>
             </form>
           ) : (
-            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreateBulk(bulkF); setCreating(false); }}>
+            <form className="grid gap-4" onSubmit={async (e) => { e.preventDefault(); await onCreateBulk({ ...bulkF, experienceId: exp }); setCreating(false); }}>
               <Field label="Nombre base" placeholder="Mesa" value={bulkF.prefix} onChange={(e) => setBulkF({ ...bulkF, prefix: e.target.value })} maxLength={30} required autoFocus />
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Empezar en" type="number" min={0} max={9999} value={bulkF.from} onChange={(e) => setBulkF({ ...bulkF, from: Math.max(0, Number(e.target.value) || 0) })} required />
@@ -366,6 +385,7 @@ function TablesView({ tables, allowed, bizName, onCreate, onCreateBulk, onDelete
               <p className="rounded-xl bg-white/[0.05] px-4 py-3 text-sm text-slate-300">
                 Se crearán <b>{bulkF.count}</b> mesas: <b>{bulkF.prefix.trim() || 'Mesa'} {bulkF.from}</b>{bulkF.count > 1 && <> … <b>{bulkF.prefix.trim() || 'Mesa'} {bulkF.from + bulkF.count - 1}</b></>}. Las que ya existan con ese nombre se omiten.
               </p>
+              {choices.length > 1 && design}
               <Btn kind="accent" className="py-3">Crear {bulkF.count} mesas</Btn>
             </form>
           )}
@@ -439,7 +459,7 @@ export default function Admin() {
           tables={tables}
           allowed={feats.includes('designs') ? biz.allowedExperiences ?? [] : ['classic']}
           bizName={biz.name}
-          onCreate={(name) => reload(() => api('POST', '/admin/tables', { name }), 'Mesa creada')}
+          onCreate={(name, experienceId) => reload(() => api('POST', '/admin/tables', { name, experienceId }), 'Mesa creada')}
           onDelete={(ids) => reload(async () => { const r = await api('POST', '/admin/tables/delete', { ids }); toast(`${r.deleted} mesa${r.deleted === 1 ? '' : 's'} eliminada${r.deleted === 1 ? '' : 's'}`); }, '')}
           onCreateBulk={(d) => reload(async () => { const r = await api('POST', '/admin/tables/bulk', d); toast(`${r.created} mesa${r.created === 1 ? '' : 's'} creada${r.created === 1 ? '' : 's'}${r.skipped ? ` · ${r.skipped} ya existían` : ''}`); }, '')}
           onPatch={(id, d, ok) => reload(() => api('PATCH', `/admin/tables/${id}`, d), ok)}
@@ -448,6 +468,8 @@ export default function Admin() {
       )}
 
       {curTab === 'settings' && <Settings biz={biz} onSave={(d) => reload(() => api('PATCH', '/admin/business', d), 'Configuración guardada')} />}
+
+      {curTab === 'library' && <LibraryView toast={toast} />}
 
       {curTab === 'staff' && (
         <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
@@ -509,6 +531,68 @@ export default function Admin() {
       )}
       {node}
     </Shell>
+  );
+}
+
+/** Emparejar el agente local (programa que corre en el PC del bar y sirve los videos de una carpeta). */
+function LibraryView({ toast }: { toast: (m: string, err?: boolean) => void }) {
+  const [st, setSt] = useState<{ enabled: boolean; paired: boolean; connected: boolean; count: number } | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    const tick = () => api('GET', '/agent/status').then((s) => { if (!dead) setSt(s); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 3000);
+    api('GET', '/agent/token').then((r) => { if (!dead) setToken(r.token); }).catch(() => {});
+    return () => { dead = true; clearInterval(t); };
+  }, []);
+
+  async function generate() {
+    if (token && !confirm('El agente que está conectado ahora dejará de funcionar hasta que le pegues el token nuevo. ¿Generar uno nuevo?')) return;
+    setBusy(true);
+    try { const r = await api('POST', '/agent/token'); setToken(r.token); setShow(true); toast('Token generado'); }
+    catch (e: any) { toast(e.message, true); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+      <Card title="Estado del agente">
+        <div className="grid gap-3">
+          <div className="flex items-center gap-2">
+            {st?.connected ? <Badge tone="green">Conectado</Badge> : <Badge tone="red">{st?.paired || token ? 'Desconectado' : 'Sin emparejar'}</Badge>}
+            {st?.connected && <Badge tone="teal">{st.count} canciones</Badge>}
+          </div>
+          <p className="text-sm text-slate-400">
+            {st?.connected
+              ? 'Cuando alguien busque una canción, se mira primero en la carpeta del bar. Si no hay coincidencias, se busca en YouTube.'
+              : 'Mientras el agente no esté conectado, las búsquedas van directo a YouTube.'}
+          </p>
+        </div>
+      </Card>
+      <Card title="Emparejar el agente">
+        <ol className="grid list-decimal gap-3 pl-5 text-sm text-slate-300">
+          <li>En el PC del bar, abre el agente (<code className="rounded bg-white/10 px-1">npm start</code> en la carpeta <code className="rounded bg-white/10 px-1">agent</code>) y entra a <code className="rounded bg-white/10 px-1">http://localhost:4545</code>.</li>
+          <li>Elige la carpeta con los videos. El nombre de cada archivo es lo que se busca (por ejemplo <i>Artista - Canción.mp4</i>).</li>
+          <li>Pega este token y pulsa «Guardar y conectar».</li>
+        </ol>
+        <div className="mt-4 grid gap-2">
+          {token ? (
+            <div className="flex items-center gap-2">
+              <input readOnly value={show ? token : '•'.repeat(24)} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs" />
+              <Btn onClick={() => setShow((s) => !s)}>{show ? 'Ocultar' : 'Ver'}</Btn>
+              <Btn onClick={() => { navigator.clipboard?.writeText(token).then(() => toast('Token copiado'), () => toast('No se pudo copiar', true)); }}>Copiar</Btn>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Aún no hay token.</p>
+          )}
+          <div><Btn kind="accent" disabled={busy} onClick={generate}>{token ? 'Generar token nuevo' : 'Generar token'}</Btn></div>
+        </div>
+      </Card>
+    </div>
   );
 }
 

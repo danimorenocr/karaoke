@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AdminModule } from './admin/admin.module';
+import { AgentModule } from './agent/agent.module';
 import { AuthModule } from './auth/auth.module';
 import { PlansModule } from './plans/plans.service';
 import { PrismaModule } from './prisma/prisma.service';
@@ -16,6 +17,7 @@ import { YoutubeModule } from './youtube/youtube.module';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1200 }]),
     PrismaModule,
     PlansModule,
+    AgentModule,
     AuthModule,
     RealtimeModule,
     QueueModule,

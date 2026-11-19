@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Module, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { QueueModule } from '../queue/queue.module';
 import { QueueService } from '../queue/queue.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,6 +8,7 @@ import { YoutubeModule } from '../youtube/youtube.module';
 import { YoutubeService } from '../youtube/youtube.service';
 import { EventsService } from '../stats/events.service';
 import { PlansService } from '../plans/plans.service';
+import { AgentService } from '../agent/agent.module';
 
 class CreateRequestDto {
   @Matches(/^[\w-]{11}$/, { message: 'videoId invalido' }) videoId: string;
@@ -15,6 +16,7 @@ class CreateRequestDto {
   @IsOptional() @IsString() @MaxLength(120) channel?: string;
   @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
   @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
+  @IsOptional() @IsIn(['LOCAL', 'YOUTUBE']) source?: 'LOCAL' | 'YOUTUBE';
   @IsOptional() @IsString() @MaxLength(40) clientId?: string;
 }
 
@@ -35,7 +37,7 @@ class FeedbackDto {
 /** Sin login: la mesa se identifica por el token del QR. */
 @Controller('public/:token')
 class PublicController {
-  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService, private plans: PlansService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService, private plans: PlansService, private agents: AgentService) {}
 
   @Get('state')
   @Throttle({ default: { limit: 3000, ttl: 60_000 } })
@@ -54,6 +56,9 @@ class PublicController {
     const canAny = await this.plans.has(table.businessId, 'searchAny');
     const wanted = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
     const m = canAny ? wanted : 'KARAOKE';
+    // Biblioteca del bar primero; si no hay coincidencias (o el agente no esta), YouTube
+    const local = await this.agents.search(table.businessId, q);
+    if (local.length) return local;
     return this.yt.searchSongs(q, m, table.business.searchProvider);
   }
 

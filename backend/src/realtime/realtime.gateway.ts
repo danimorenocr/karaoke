@@ -1,6 +1,7 @@
 import { Global, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { AgentService } from '../agent/agent.module';
 import { AuthGuard } from '../auth/auth';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetricsService } from '../stats/metrics.service';
@@ -17,11 +18,13 @@ const origins = () => (process.env.CORS_ORIGINS ?? 'http://localhost:5173').spli
   // (asi la TV caida se detecta en ~18 s y no en minutos).
   pingInterval: 10_000,
   pingTimeout: 8_000,
+  // El agente local envia el indice de su biblioteca (miles de nombres) en un solo mensaje
+  maxHttpBufferSize: 8e6,
 })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   @WebSocketServer() server: Server;
   private keepAlive?: NodeJS.Timeout;
-  constructor(private prisma: PrismaService, private auth: AuthGuard, private metrics: MetricsService) {}
+  constructor(private prisma: PrismaService, private auth: AuthGuard, private metrics: MetricsService, private agents: AgentService) {}
 
   /**
    * Mientras haya alguien conectado, un SELECT 1 cada 3 min evita que Neon suspenda la BD
@@ -39,9 +42,26 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     clearInterval(this.keepAlive);
   }
 
-  async handleConnection(socket: Socket) {
+  /** El cliente puede emitir mensajes antes de que termine la validacion del token (consulta a la BD): se espera a `ready`. */
+  handleConnection(socket: Socket) {
+    socket.data.ready = this.setup(socket);
+    return socket.data.ready;
+  }
+
+  private async setup(socket: Socket) {
     try {
-      const { token, tableToken, role } = socket.handshake.auth ?? {};
+      const { token, tableToken, role, agentToken } = socket.handshake.auth ?? {};
+      // Agente local del bar: no entra a las salas del karaoke, solo envia el indice de su biblioteca
+      if (agentToken) {
+        const b = await this.prisma.business.findUnique({ where: { agentToken: String(agentToken) }, select: { id: true } });
+        if (!b) return socket.disconnect(true);
+        const prev = this.agents.socketOf(b.id);
+        if (prev && prev !== socket.id) (await this.server.in(prev).fetchSockets()).forEach((s) => { s.data.agentBiz = undefined; s.disconnect(true); });
+        socket.data.agentBiz = b.id;
+        this.agents.attach(b.id, socket.id);
+        this.emitAgentStatus(b.id);
+        return;
+      }
       let businessId: string | null = null;
       if (tableToken) {
         const t = await this.prisma.table.findUnique({ where: { qrToken: String(tableToken) } });
@@ -76,7 +96,26 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.emitTvStatus(businessId);
   }
 
+  /** El agente envia (o reenvia) la lista de videos de su carpeta: [{ id, name }]. */
+  @SubscribeMessage('agent.index')
+  async agentIndex(@ConnectedSocket() socket: Socket, @MessageBody() body: { songs?: unknown }) {
+    await socket.data.ready;
+    const biz = socket.data.agentBiz as string | undefined;
+    if (!biz || !this.agents.setIndex(biz, socket.id, body?.songs)) return { ok: false };
+    this.emitAgentStatus(biz);
+    return { ok: true, count: this.agents.status(biz).count };
+  }
+
+  private emitAgentStatus(businessId: string) {
+    this.server.to(`biz:${businessId}`).emit('agent.status', this.agents.status(businessId));
+  }
+
   handleDisconnect(socket: Socket) {
+    const agentBiz = socket.data.agentBiz as string | undefined;
+    if (agentBiz) {
+      if (this.agents.detach(agentBiz, socket.id)) this.emitAgentStatus(agentBiz);
+      return;
+    }
     const id = socket.data.businessId;
     if (id) this.metrics.socketDisconnected();
     if (id) setTimeout(() => this.emitTvStatus(id), 300);

@@ -8,6 +8,9 @@ declare global {
   }
 }
 
+/** Agente local del bar (en este mismo PC): sirve los videos de la biblioteca. */
+const LOCAL_AGENT: string = (import.meta.env.VITE_AGENT_URL as string | undefined) || 'http://127.0.0.1:4545';
+
 function loadYouTubeApi(): Promise<void> {
   return new Promise((resolve) => {
     if (window.YT?.Player) return resolve();
@@ -41,6 +44,8 @@ export default function Tv() {
   const [slow, setSlow] = useState(false); // el video tarda mucho: se quita el aviso para no ocultar un posible error
 
   const playerRef = useRef<any>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // reproductor de videos locales (biblioteca del bar)
+  const curSource = useRef<'YOUTUBE' | 'LOCAL'>('YOUTUBE'); // motor que tiene la cancion actual
   const hostRef = useRef<HTMLDivElement>(null);
   const loadedId = useRef<string | null>(null);
   const reported = useRef<string | null>(null);
@@ -78,17 +83,75 @@ export default function Tv() {
     setHold(false);
   }
 
+  // ---- Motores de reproduccion: YouTube (iframe) y local (<video> servido por el agente del bar) ----
+  function stopLocal() {
+    const v = videoRef.current;
+    if (!v) return;
+    v.onloadedmetadata = null;
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+  }
+  function stopAll() {
+    try { playerRef.current?.stopVideo?.(); } catch { /* */ }
+    stopLocal();
+  }
+  function enginePause() {
+    if (curSource.current === 'LOCAL') videoRef.current?.pause();
+    else playerRef.current?.pauseVideo?.();
+  }
+  function enginePlay() {
+    if (curSource.current === 'LOCAL') videoRef.current?.play().catch((e) => { if (e?.name === 'NotAllowedError') setBlocked(true); });
+    else playerRef.current?.playVideo?.();
+  }
+  /** Estado del motor activo: sonando/en pausa (active), segundo actual y si esta detenido. */
+  function engineInfo() {
+    if (curSource.current === 'LOCAL') {
+      const v = videoRef.current;
+      const has = !!v && !!v.getAttribute('src');
+      return { has, active: has && v!.readyState >= 2 && !v!.ended, paused: has && v!.paused && !v!.ended, t: v?.currentTime ?? 0 };
+    }
+    const p = playerRef.current;
+    const st = p?.getPlayerState?.();
+    const PS = window.YT?.PlayerState;
+    return { has: !!p?.getPlayerState, active: st === PS?.PLAYING || st === PS?.PAUSED, paused: st === PS?.PAUSED || st === PS?.CUED || st === PS?.UNSTARTED, t: Number(p?.getCurrentTime?.() ?? 0) };
+  }
+  function startPlayback(cur: any, startSec: number) {
+    if (cur.source === 'LOCAL') {
+      curSource.current = 'LOCAL';
+      try { playerRef.current?.stopVideo?.(); } catch { /* */ }
+      const v = videoRef.current;
+      if (!v) return;
+      v.onloadedmetadata = () => { if (startSec > 0 && isFinite(v.duration) && startSec < v.duration - 1) v.currentTime = startSec; };
+      v.src = `${LOCAL_AGENT}/video/${encodeURIComponent(cur.videoId)}`;
+      v.play().catch((e) => { if (e?.name === 'NotAllowedError') setBlocked(true); });
+    } else {
+      curSource.current = 'YOUTUBE';
+      stopLocal();
+      playerRef.current?.loadVideoById({ videoId: cur.videoId, startSeconds: startSec });
+    }
+  }
+  /** La cancion termino (cualquiera de los dos motores). */
+  function onSongEnded() {
+    setPlaying(false);
+    setFinishedId(loadedId.current);
+    const sec = Number(stateRef.current?.business?.tvInterludeSec ?? 8);
+    if (sec > 0) { endedAt.current = Date.now(); setBar({ start: Date.now(), ms: sec * 1000 }); }
+    report('ended');
+  }
+
   /** Alinea el reproductor con lo que dice el backend. */
   function sync(s: any, forceReload = false) {
     const p = playerRef.current;
-    // El reproductor solo tiene sus metodos (loadVideoById, etc.) despues de onReady
-    if (!p || !armedRef.current || !readyRef.current || replacedRef.current) return;
+    if (!armedRef.current || replacedRef.current) return;
     const cur = s.current;
+    // El de YouTube solo tiene sus metodos (loadVideoById, etc.) despues de onReady; un video local no lo necesita
+    if (cur?.source !== 'LOCAL' && (!p || !readyRef.current)) return;
     if (!cur) {
       endHold();
       setBar(null);
       endedAt.current = null;
-      if (loadedId.current) p.stopVideo?.();
+      if (loadedId.current) stopAll();
       loadedId.current = null;
       setPlaying(false);
       return;
@@ -104,7 +167,7 @@ export default function Tv() {
       endHold();
       // Si la TV se recargo (o el servidor reinicio) a mitad de cancion, retoma donde iba
       const pos = isNew && !firstLoad ? 0 : Number(s.session?.positionSec ?? 0);
-      const start = () => p.loadVideoById({ videoId: cur.videoId, startSeconds: pos > 5 ? pos - 2 : 0 });
+      const start = () => startPlayback(cur, pos > 5 ? pos - 2 : 0);
       const sec = Number(s.business?.tvInterludeSec ?? 8);
       lastPaused.current = false;
       if (isNew && sec > 0 && pos <= 5) {
@@ -112,7 +175,7 @@ export default function Tv() {
         // La cuenta empieza cuando termino la cancion anterior (no cuando llega la nueva) para que sean `sec` en total.
         const since = endedAt.current && Date.now() - endedAt.current < sec * 1000 ? Date.now() - endedAt.current : 0;
         if (!since) setBar({ start: Date.now(), ms: sec * 1000 });
-        p.stopVideo?.();
+        stopAll();
         holdRef.current = true;
         setHold(true);
         holdTimer.current = setTimeout(() => {
@@ -135,7 +198,7 @@ export default function Tv() {
     const paused = !!s.session?.paused;
     if (paused !== lastPaused.current) {
       lastPaused.current = paused;
-      paused ? p.pauseVideo?.() : p.playVideo?.();
+      paused ? enginePause() : enginePlay();
     }
   }
 
@@ -168,13 +231,8 @@ export default function Tv() {
             load(); // si ya pulsaron "Iniciar karaoke", carga lo que corresponda
           },
           onStateChange: (e: any) => {
-            if (e.data === window.YT.PlayerState.ENDED) {
-              setPlaying(false);
-              setFinishedId(loadedId.current);
-              const sec = Number(stateRef.current?.business?.tvInterludeSec ?? 8);
-              if (sec > 0) { endedAt.current = Date.now(); setBar({ start: Date.now(), ms: sec * 1000 }); }
-              report('ended');
-            }
+            if (curSource.current !== 'YOUTUBE') return; // eventos del iframe mientras suena un video local
+            if (e.data === window.YT.PlayerState.ENDED) onSongEnded();
             if (e.data === window.YT.PlayerState.PLAYING) { setBlocked(false); setPlaying(true); }
             // Pausa que no vino del DJ (p.ej. el navegador pausa al ocultar la pestana): reanudar.
             if (e.data === window.YT.PlayerState.PAUSED && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current) {
@@ -184,7 +242,7 @@ export default function Tv() {
               }, 100);
             }
           },
-          onError: (e: any) => report('error', Number(e?.data) || undefined), // video eliminado / no incrustable / etc.
+          onError: (e: any) => { if (curSource.current === 'YOUTUBE') report('error', Number(e?.data) || undefined); }, // video eliminado / no incrustable / etc.
           onAutoplayBlocked: () => setBlocked(true),
         },
       });
@@ -196,13 +254,13 @@ export default function Tv() {
         replacedRef.current = true;
         armedRef.current = false;
         setReplaced(true);
-        try { playerRef.current?.stopVideo?.(); } catch { /* */ }
+        stopAll();
         return;
       }
       if (name === 'disconnect') setOnline(false);
       // Pausa/reanuda al instante con el evento; el refetch posterior solo confirma
-      if (name === 'playback.paused' && armedRef.current) { lastPaused.current = true; playerRef.current?.pauseVideo?.(); }
-      if (name === 'playback.resumed' && armedRef.current && !holdRef.current) { lastPaused.current = false; playerRef.current?.playVideo?.(); }
+      if (name === 'playback.paused' && armedRef.current) { lastPaused.current = true; enginePause(); }
+      if (name === 'playback.resumed' && armedRef.current && !holdRef.current) { lastPaused.current = false; enginePlay(); }
       if (name === 'queue.updated') load();
       if (name === 'playback.reload' && stateRef.current) sync(stateRef.current, true);
     });
@@ -211,28 +269,25 @@ export default function Tv() {
     // Latido cada 5 s: avisa al servidor que la TV sigue viva y guarda en que segundo va la cancion
     const beat = setInterval(() => {
       if (!armedRef.current || replacedRef.current) return;
-      const p = playerRef.current;
       const id = loadedId.current;
-      const st = p?.getPlayerState?.();
-      const sendPos = id && !holdRef.current && (st === window.YT?.PlayerState?.PLAYING || st === window.YT?.PlayerState?.PAUSED);
-      api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(p.getCurrentTime()) } : {}).catch(() => {});
+      const info = engineInfo();
+      const sendPos = id && !holdRef.current && info.active;
+      api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(info.t) } : {}).catch(() => {});
     }, 5000);
     // Vigilante: si deberia estar sonando (el DJ no pauso) y el reproductor esta detenido, lo reanuda.
     // Cubre el caso de que el navegador pause el video al cambiar de pestana o ventana.
     const watchdog = setInterval(() => {
-      const p = playerRef.current;
-      if (!armedRef.current || !readyRef.current || !loadedId.current || lastPaused.current || holdRef.current || !p?.getPlayerState) return;
-      const st = p.getPlayerState();
-      const PS = window.YT.PlayerState;
-      if (st === PS.PAUSED || st === PS.CUED || st === PS.UNSTARTED) {
-        console.info('[TV] video detenido (estado ' + st + ', hidden=' + document.hidden + '): reanudando');
-        p.playVideo();
+      if (!armedRef.current || !loadedId.current || lastPaused.current || holdRef.current) return;
+      if (curSource.current === 'YOUTUBE' && !readyRef.current) return;
+      const info = engineInfo();
+      if (info.has && info.paused) {
+        console.info('[TV] video detenido (' + curSource.current + ', hidden=' + document.hidden + '): reanudando');
+        enginePlay();
       }
     }, 1500);
     // Al volver a la pestana, asegura que el video siga sonando si no esta en pausa
     const onVisible = () => {
-      const p = playerRef.current;
-      if (!document.hidden && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current && p?.getPlayerState?.() === window.YT.PlayerState.PAUSED) p.playVideo();
+      if (!document.hidden && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current && engineInfo().paused) enginePlay();
       if (!document.hidden) load();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -245,6 +300,7 @@ export default function Tv() {
       clearInterval(watchdog);
       if (holdTimer.current) clearTimeout(holdTimer.current);
       readyRef.current = false;
+      stopLocal();
       playerRef.current?.destroy?.();
       playerRef.current = null;
     };
@@ -404,6 +460,23 @@ export default function Tv() {
       )}
       <div className="absolute inset-0">
         <div ref={hostRef} className="absolute inset-x-0 bottom-0 top-[11vh] [&>iframe]:h-full [&>iframe]:w-full" />
+        {/* Videos de la biblioteca local del bar: se muestra solo cuando la cancion actual es local */}
+        <video
+          ref={videoRef}
+          playsInline
+          className="absolute inset-x-0 bottom-0 top-[11vh] h-[89vh] w-full bg-black object-contain"
+          style={{ display: cur?.source === 'LOCAL' ? 'block' : 'none' }}
+          onPlaying={() => { setBlocked(false); setPlaying(true); }}
+          onEnded={() => { if (curSource.current === 'LOCAL') onSongEnded(); }}
+          onError={(e) => { if (curSource.current === 'LOCAL' && e.currentTarget.getAttribute('src')) report('error'); }}
+          onPause={(e) => {
+            const v = e.currentTarget;
+            // Pausa que no vino del DJ: reanudar
+            if (curSource.current === 'LOCAL' && armedRef.current && loadedId.current && !lastPaused.current && !holdRef.current && v.getAttribute('src') && !v.ended) {
+              setTimeout(() => { if (!lastPaused.current && v.paused && !v.ended && v.getAttribute('src')) v.play().catch(() => {}); }, 100);
+            }
+          }}
+        />
 
         {/* Interlude, fase 1: imagen del bar centrada sobre su propio fondo difuminado */}
         {bigImg && (
@@ -549,7 +622,7 @@ export default function Tv() {
                 Iniciar transmisión
               </button>
             ) : blocked ? (
-              <button onClick={() => { unlockAudio(); playerRef.current?.playVideo(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
+              <button onClick={() => { unlockAudio(); enginePlay(); setBlocked(false); }} className="tv-btn relative rounded-full px-14 py-6 text-3xl font-extrabold text-[#0b1030] md:text-4xl" style={{ background: '#a9b8ff' }}>
                 Pulsa para continuar
               </button>
             ) : cur && cur.id !== finishedId ? (

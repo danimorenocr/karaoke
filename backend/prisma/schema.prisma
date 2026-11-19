@@ -102,6 +102,8 @@ model Business {
   autoDjMode         AutoDjMode     @default(OFF)
   // Generos que el Auto-DJ debe poner (vacio = lo mas pedido del bar)
   autoDjGenres       String[]       @default([])
+  // Token con el que el agente local del bar (biblioteca de videos en su PC) se conecta; null = sin emparejar
+  agentToken         String?        @unique
   createdAt          DateTime       @default(now())
 
   payments Payment[]
@@ -176,6 +178,8 @@ model SongRequest {
   auto            Boolean       @default(false)
   sessionId       String
   videoId         String
+  // YOUTUBE o LOCAL (video de la biblioteca del bar; videoId es el id que le da el agente)
+  source          String        @default("YOUTUBE")
   title           String
   channel         String?
   thumbnail       String?

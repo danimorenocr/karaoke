@@ -7,6 +7,9 @@
     "start": "node dist/main",
     "start:prod": "prisma migrate deploy && node dist/main",
     "dev": "nodemon",
+    "dev:local": "node --env-file=.env.local ./node_modules/nodemon/bin/nodemon.js",
+    "db:local:migrate": "node --env-file=.env.local ./node_modules/prisma/build/index.js migrate deploy",
+    "db:local:reset": "node --env-file=.env.local ./node_modules/prisma/build/index.js migrate reset --force",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
   },

@@ -11,6 +11,8 @@ export interface SongSearchResult {
   isMusic?: boolean;
   /** Canal de sello/VEVO: suele tener bloqueo de reproduccion incrustada; el cliente lo pone al final. */
   risky?: boolean;
+  /** LOCAL = video de la biblioteca del bar (agente local); sin valor = YouTube. */
+  source?: 'LOCAL' | 'YOUTUBE';
 }
 
 /** Abstraccion para poder cambiar de proveedor sin tocar cola ni mesas. */

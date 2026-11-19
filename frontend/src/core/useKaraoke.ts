@@ -87,7 +87,8 @@ export function useKaraoke(token: string | undefined) {
   const full = !!state && holding >= state.maxPending;
   const blocked = !state ? '' : !state.session ? 'El karaoke aún no ha comenzado.' : !state.session.open ? 'Las solicitudes están pausadas por ahora.' : '';
   const heldIds = new Set(mine.filter((r) => HOLDING.includes(r.status)).map((r) => r.videoId));
-  const sorted = [...results].sort((a, b) => Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1));
+  // Lo que esta en la biblioteca del bar (source LOCAL) va primero
+  const sorted = [...results].sort((a, b) => Number(b.source === 'LOCAL') - Number(a.source === 'LOCAL') || Number(!!a.risky) - Number(!!b.risky) || (b.viewCount ?? -1) - (a.viewCount ?? -1));
   const showSkeleton = step === 'searching' || (step === 'results' && !!googleQuery && googleLoading && googleItems.length === 0);
   const done = doneId ? mine.find((r) => r.id === doneId) : null;
   const pos = done && state ? state.queue.findIndex((r: any) => r.id === done.id) + 1 : 0;
@@ -156,6 +157,7 @@ export function useKaraoke(token: string | undefined) {
         channel: song.channelTitle,
         thumbnail: song.thumbnail,
         durationSec: song.durationSec,
+        source: song.source === 'LOCAL' ? 'LOCAL' : undefined,
         clientId: clientId(),
       });
       await load();

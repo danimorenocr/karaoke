@@ -22,6 +22,7 @@ class DjAddDto {
   @IsOptional() @IsString() @MaxLength(120) channel?: string;
   @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
   @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
+  @IsOptional() @IsIn(['LOCAL', 'YOUTUBE']) source?: 'LOCAL' | 'YOUTUBE';
 }
 class AutoDjDto {
   @IsOptional() @IsIn(['OFF', 'AUTO']) mode?: 'OFF' | 'AUTO';
@@ -38,6 +39,7 @@ class RequestRefDto {
 }
 
 import { PlansService } from '../plans/plans.service';
+import { AgentService } from '../agent/agent.module';
 const biz = (u: AuthUser) => u.businessId!;
 
 /** Panel DJ (DJ y ADMIN del establecimiento; el businessId siempre sale del token, nunca del cliente). */
@@ -45,11 +47,13 @@ const biz = (u: AuthUser) => u.businessId!;
 @UseGuards(AuthGuard)
 @Roles('DJ', 'ADMIN')
 class DjController {
-  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private plans: PlansService) {}
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private plans: PlansService, private agents: AgentService) {}
 
   /** Busqueda del DJ, segun la configuracion del bar (solo karaoke / cualquier musica). */
   @Get('search') async search(@CurrentUser() u: AuthUser, @Query('q') q = '') {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: biz(u) }, select: { searchMode: true, searchProvider: true } });
+    const local = await this.agents.search(biz(u), q);
+    if (local.length) return local;
     return this.yt.searchSongs(q, (await this.plans.has(biz(u), 'searchAny')) ? b.searchMode : 'KARAOKE', b.searchProvider);
   }
   @Post('requests') add(@CurrentUser() u: AuthUser, @Body() d: DjAddDto) {

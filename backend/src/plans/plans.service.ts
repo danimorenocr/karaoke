@@ -12,6 +12,7 @@ export const FEATURES = [
   { id: 'autoApprove', label: 'Aprobación automática', hint: 'Las canciones entran a la cola sin que el DJ las apruebe' },
   { id: 'searchAny', label: 'Buscar cualquier música', hint: 'Además del modo solo karaoke' },
   { id: 'voting', label: 'Modo competencia (votación)', hint: 'Cada actuación la califica el público desde el celular y el puntaje sale en vivo en la TV' },
+  { id: 'localLibrary', label: 'Biblioteca local de videos', hint: 'Busca primero en los videos guardados en el PC del bar (agente local) y luego en YouTube' },
   { id: 'autoDj', label: 'Auto-DJ', hint: 'Cola automática por géneros cuando no hay pedidos' },
 ] as const;
 export type FeatureId = (typeof FEATURES)[number]['id'];

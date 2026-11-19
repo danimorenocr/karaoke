@@ -1,0 +1,25 @@
+# Base de datos LOCAL para desarrollo (no toca Neon/produccion).
+#   docker compose up -d        -> levanta Postgres en localhost:5433
+#   docker compose down         -> lo apaga (los datos se conservan en el volumen)
+#   docker compose down -v      -> lo apaga y BORRA los datos locales
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: karaoke-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: karaoke
+      POSTGRES_PASSWORD: karaoke
+      POSTGRES_DB: karaoke
+    ports:
+      - "5433:5432" # 5433 para no chocar con un PostgreSQL ya instalado en el PC
+    volumes:
+      - karaoke-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karaoke -d karaoke"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  karaoke-pgdata:

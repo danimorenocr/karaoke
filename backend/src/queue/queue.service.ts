@@ -6,6 +6,7 @@ import { allowedExperiences } from '../experiences';
 import { RealtimeService } from '../realtime/realtime.gateway';
 import { EventsService } from '../stats/events.service';
 import { PlansService } from '../plans/plans.service';
+import { AgentService } from '../agent/agent.module';
 
 type Tx = Prisma.TransactionClient;
 
@@ -15,6 +16,8 @@ export interface NewRequestInput {
   channel?: string;
   thumbnail?: string;
   durationSec?: number;
+  /** LOCAL = video de la biblioteca del bar (se valida contra el indice del agente). */
+  source?: 'LOCAL' | 'YOUTUBE';
   clientId?: string; // id anonimo del navegador (para medir recurrencia); no es un dato personal
 }
 
@@ -41,7 +44,14 @@ const FINISHED: RequestStatus[] = ['COMPLETED', 'REJECTED', 'CANCELLED', 'FAILED
  */
 @Injectable()
 export class QueueService {
-  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService) {}
+  constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService, private agents: AgentService) {}
+
+  /** Un video LOCAL se valida contra el indice del agente y toma su titulo real; el resto queda como YouTube. */
+  private async prepare(businessId: string, input: NewRequestInput): Promise<NewRequestInput> {
+    if (input.source !== 'LOCAL') return { ...input, source: 'YOUTUBE' };
+    const s = await this.agents.resolve(businessId, input.videoId);
+    return { ...input, source: 'LOCAL', title: s.title, channel: s.channel, thumbnail: s.thumbnail, durationSec: undefined };
+  }
 
   // ---------- helpers ----------
 
@@ -200,6 +210,7 @@ export class QueueService {
     return {
       id: r.id,
       videoId: r.videoId,
+      source: r.source,
       title: r.title,
       channel: r.channel,
       thumbnail: r.thumbnail,
@@ -430,10 +441,11 @@ export class QueueService {
 
   // ---------- solicitudes (cliente) ----------
 
-  async createRequest(tableToken: string, input: NewRequestInput) {
+  async createRequest(tableToken: string, rawInput: NewRequestInput) {
     const table = await this.prisma.table.findUnique({ where: { qrToken: tableToken }, include: { business: true } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new ForbiddenException('Este codigo QR no es valido');
     const business = table.business;
+    const input = await this.prepare(business.id, rawInput);
     const autoApprove = business.autoApprove && (await this.plans.has(business.id, 'autoApprove'));
 
     return this.locked(business.id, async (tx) => {
@@ -461,6 +473,7 @@ export class QueueService {
           tableId: table.id,
           sessionId: session.id,
           videoId: input.videoId,
+          source: input.source === 'LOCAL' ? 'LOCAL' : 'YOUTUBE',
           title: input.title.slice(0, 200),
           channel: input.channel?.slice(0, 120),
           thumbnail: input.thumbnail?.slice(0, 500),
@@ -553,7 +566,8 @@ export class QueueService {
   }
 
   /** El DJ agrega una cancion directo a la cola (aprobada, sin limite por mesa ni revision). */
-  djAddRequest(businessId: string, tableId: string, input: NewRequestInput) {
+  async djAddRequest(businessId: string, tableId: string, rawInput: NewRequestInput) {
+    const input = await this.prepare(businessId, rawInput);
     return this.locked(businessId, async (tx) => {
       const session = await this.requireActiveSession(tx, businessId);
       const table = await tx.table.findFirst({ where: { id: tableId, businessId } });
@@ -565,6 +579,7 @@ export class QueueService {
           tableId: table.id,
           sessionId: session.id,
           videoId: input.videoId,
+          source: input.source === 'LOCAL' ? 'LOCAL' : 'YOUTUBE',
           title: input.title.slice(0, 200),
           channel: input.channel?.slice(0, 120),
           thumbnail: input.thumbnail?.slice(0, 500),
@@ -653,8 +668,8 @@ export class QueueService {
   async playerError(businessId: string, requestId: string, code?: number) {
     // 100 no existe/privado, 101/150 el dueno bloqueo la reproduccion incrustada: es permanente, se recuerda
     if (code === 100 || code === 101 || code === 150) {
-      const cur = await this.prisma.songRequest.findFirst({ where: { id: requestId, status: 'PLAYING' }, select: { videoId: true } });
-      if (cur) await this.yt.markBlocked(cur.videoId);
+      const cur = await this.prisma.songRequest.findFirst({ where: { id: requestId, status: 'PLAYING' }, select: { videoId: true, source: true } });
+      if (cur && cur.source !== 'LOCAL') await this.yt.markBlocked(cur.videoId);
     }
     return this.finishCurrent(businessId, requestId, 'FAILED');
   }
