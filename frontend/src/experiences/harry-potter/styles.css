@@ -140,4 +140,10 @@
 
 .hp-main::-webkit-scrollbar { display: none; }
 
+/* Este diseno ocupa exactamente la pantalla (100dvh): el pie legal de la pagina, fuera del contenedor, la volveria
+   desplazable y al enfocar el buscador todo subia dejando el fondo cortado. El aviso se muestra dentro (.hp-legal). */
+body:has(.hp-root) .legal-foot { display: none; }
+.hp-legal { margin: 6px 0 0; text-align: center; font-size: 11px; line-height: 1.4; color: #d8c08c; text-shadow: 0 1px 4px #000; }
+.hp-legal a { text-decoration: underline; }
+
 .hp-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; border: 2px solid currentColor; box-shadow: 0 6px 18px rgba(0,0,0,.3); }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { fmtDuration } from '../../lib/api';
 import GoogleFallback from '../../core/GoogleFallback';
 import { ExperienceProps, LOADING_LINES, STATUS_LABEL, WAITING } from '../../core/useKaraoke';
@@ -177,7 +178,11 @@ export default function HarryPotter({ k }: ExperienceProps) {
         <span className="hp-table"><svg viewBox="0 0 24 24" aria-hidden><path d="M4 8h16M6 8v12M18 8v12M3 8l1-3h16l1 3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>{state.table.name}</span>
       </header>
 
-      <main className={`hp-main ${tab === 'inicio' ? 'home' : ''}`} key={tab}>{tab === 'inicio' ? inicio : tab === 'cola' ? cola : mia}</main>
+      <main className={`hp-main ${tab === 'inicio' ? 'home' : ''}`} key={tab}>
+        {tab === 'inicio' ? inicio : tab === 'cola' ? cola : mia}
+        {/* Aviso legal dentro de la pantalla: fuera del contenedor (alto fijo) haria desplazable toda la pagina */}
+        <p className="hp-legal">Al usar el servicio aceptas los <Link to="/terminos">Términos</Link> y la <Link to="/privacidad">Política de privacidad</Link>.</p>
+      </main>
 
       <nav className="hp-nav">
         {([['inicio', 'Inicio', 0, 'M3 11l9-8 9 8v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z'], ['cola', 'Cola', state.queue.length, 'M4 6h16M4 12h16M4 18h10'], ['mia', 'Mi solicitud', holding, 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z']] as const).map(([id, label, n, d]) => (
