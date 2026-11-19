@@ -128,7 +128,7 @@
 /* Avisos (toast): arriba, estilo pergamino con sello */
 .hp-root .kx-toast {
   position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); bottom: auto; left: 50%; right: auto; z-index: 60;
-  width: min(calc(100vw - 28px), 26rem); translate: none; transform: translateX(-50%); /* Tailwind 4 centra con la propiedad `translate`: se anula para no desplazar dos veces */
+  width: min(calc(100vw - 28px), 26rem); margin: 0; transform: translateX(-50%); /* el aviso base (ui.tsx) se centra con margenes, sin traslacion: aqui solo se desplaza este transform */
   display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px 12px; border-radius: 14px;
   background: linear-gradient(180deg, var(--parch), var(--parch-2)); color: var(--ink); border: 2px solid #9c7434;
   box-shadow: 0 10px 26px #000a, inset 0 0 0 3px #ffffff30; font: 600 1rem/1.25 var(--serif);
