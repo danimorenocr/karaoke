@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { clientId, connectSocket, pub } from '../lib/api';
+import { API_URL, clientId, connectSocket, pub } from '../lib/api';
 import { useToast } from '../components/ui';
 import { GOOGLE_CSE_ID, GoogleItem } from '../components/GoogleSearch';
 
@@ -48,7 +48,11 @@ export function useKaraoke(token: string | undefined) {
 
   const load = useCallback(async () => {
     try {
-      setState(await pub('GET', `/public/${token}/state`));
+      const st = await pub('GET', `/public/${token}/state?img=url`);
+      // El logo llega como direccion versionada: el navegador lo descarga una vez y lo reutiliza
+      const lg = st?.business?.logoUrl;
+      if (typeof lg === 'string' && lg.startsWith('/')) st.business.logoUrl = API_URL + lg;
+      setState(st);
     } catch (e: any) {
       if (e.status === 404) setInvalid(true);
     }
@@ -66,10 +70,12 @@ export function useKaraoke(token: string | undefined) {
   useEffect(() => {
     load();
     const off = connectSocket({ tableToken: token }, (name) => {
-      if (name === 'queue.updated' || name === 'connect') load();
+      if ((name === 'queue.updated' || name === 'connect') && !document.hidden) load(); // oculta: se actualiza al volver
     });
-    const poll = setInterval(load, 20000); // respaldo si el socket se cae
-    return () => { off(); clearInterval(poll); };
+    const poll = setInterval(() => { if (!document.hidden) load(); }, 20000); // respaldo si el socket se cae (no consulta con la pestana oculta)
+    const onVisible = () => { if (!document.hidden) load(); }; // al volver a la pestana se actualiza al momento
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { off(); clearInterval(poll); document.removeEventListener('visibilitychange', onVisible); };
   }, [token, load]);
 
   useEffect(() => {
