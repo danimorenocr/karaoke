@@ -1,7 +1,8 @@
 import type { Karaoke } from './useKaraoke';
 
-/** Dos botones sobre el buscador: solo versiones karaoke, o cualquier version (normal). */
+/** Dos botones sobre el buscador: solo versiones karaoke, o cualquier version (normal). Solo si el local permite elegir. */
 export default function SearchKind({ k }: { k: Karaoke }) {
+  if (!k.canChooseKind) return null; // local en "solo karaoke": la mesa no elige
   const opts = [['KARAOKE', 'Karaoke'], ['ANY', 'Normal']] as const;
   return (
     <div role="radiogroup" aria-label="Tipo de búsqueda" style={{ display: 'flex', gap: 8, margin: '0 0 10px' }}>
