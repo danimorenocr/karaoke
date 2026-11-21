@@ -67,10 +67,11 @@ class PublicController {
     const table = await this.prisma.table.findUnique({ where: { qrToken: token }, include: { business: { select: { searchMode: true, searchProvider: true, status: true } } } });
     if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
     this.events.record({ businessId: table.businessId, tableId: table.id, type: 'SEARCH_PERFORMED', metadata: { q: q.trim().toLowerCase().slice(0, 60) } });
-    // El comensal elige karaoke o normal; si no manda nada, vale la configuracion del bar
+    // El comensal elige karaoke o normal solo si el local esta en "cualquier musica" (y el plan lo incluye);
+    // en "solo karaoke" la mesa no puede forzar una busqueda normal
     const canAny = await this.plans.has(table.businessId, 'searchAny');
     const wanted = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
-    const m = canAny ? wanted : 'KARAOKE';
+    const m = canAny && table.business.searchMode === 'ANY' ? wanted : 'KARAOKE';
     // Biblioteca del bar primero; si no hay coincidencias (o el agente no esta), YouTube
     const local = await this.agents.search(table.businessId, q);
     if (local.length) return local;
