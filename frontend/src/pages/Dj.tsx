@@ -2,6 +2,7 @@ import { PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, u
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
 import DjSearch from '../components/DjSearch';
+import SongProgress from '../components/SongProgress';
 import { ACCENT, Btn, Icon, NavItem, Shell } from '../components/kit';
 const STATUS_LABEL: Record<string, [string, string]> = {
   COMPLETED: ['Completada', 'text-slate-400'],
@@ -54,6 +55,7 @@ const HERO: Record<Tab, [string, string]> = {
 export default function Dj() {
   const [tab, setTab] = useState<Tab>('live');
   const [s, setS] = useState<any>(null);
+  const [fetchedAt, setFetchedAt] = useState(0); // momento de la ultima recarga, para interpolar el progreso
   const [online, setOnline] = useState(true);
   const [tvConnected, setTvConnected] = useState(false);
   const [tvDown, setTvDown] = useState(false); // la TV lleva varios segundos desconectada
@@ -72,6 +74,7 @@ export default function Dj() {
       const data = await api('GET', '/dj/queue');
       if (dragData.current) return; // no pisar la cola mientras se arrastra
       setS(data);
+      setFetchedAt(Date.now());
       setTvConnected(data.tvConnected);
     } catch (e: any) {
       toast(e.message, true);
@@ -320,6 +323,7 @@ export default function Dj() {
                     {session.paused && <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-amber-300">En pausa</span>}
                   </div>
                   {s.current ? (
+                    <>
                     <div className="flex flex-wrap items-center gap-5 px-5 pb-5">
                       <Thumb src={s.current.thumbnail} className="h-24 w-40 !rounded-xl" />
                       <div className="min-w-0 flex-1 basis-60">
@@ -335,6 +339,8 @@ export default function Dj() {
                         <Btn kind="danger" onClick={() => act('POST', '/dj/playback/skip')}><span className="inline-flex items-center gap-2"><Icon name="skip" className="h-4 w-4" />Saltar</span></Btn>
                       </div>
                     </div>
+                    <SongProgress positionSec={Number(session.positionSec ?? 0)} durationSec={s.current.durationSec} paused={!!session.paused} fetchedAt={fetchedAt} />
+                    </>
                   ) : (
                     <p className="px-5 pb-6 text-sm text-slate-300">
                       {session.tvStarted
