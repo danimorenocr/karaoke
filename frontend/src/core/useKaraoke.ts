@@ -86,6 +86,11 @@ export function useKaraoke(token: string | undefined) {
   }, [step]);
 
   // ---------- derivados ----------
+  // Modo del local: KARAOKE = la mesa no elige tipo de busqueda; ANY = elige entre karaoke y normal
+  const searchMode: 'KARAOKE' | 'ANY' = state?.business?.searchMode === 'ANY' ? 'ANY' : 'KARAOKE';
+  const canChooseKind = searchMode === 'ANY';
+  // En "solo karaoke" la mesa siempre busca karaoke; en "cualquier musica" arranca en karaoke y la mesa puede cambiar a normal
+  useEffect(() => { if (searchMode === 'KARAOKE') setKind('KARAOKE'); }, [searchMode]);
   const brand: string | undefined = state?.business.primaryColor;
   const accent = !brand || brand.toLowerCase() === DEFAULT_PINK ? '#111827' : brand;
   const mine: any[] = state?.mine ?? [];
@@ -204,7 +209,7 @@ export function useKaraoke(token: string | undefined) {
   return {
     token, state, invalid, toast, toastNode, accent,
     mine, holding, full, blocked, sorted, showSkeleton, done, doneText,
-    step, setStep, q, setQ, kind, setKind, term, picked, errorMsg, setErrorMsg, lineIdx,
+    step, setStep, q, setQ, kind, setKind, searchMode, canChooseKind, term, picked, errorMsg, setErrorMsg, lineIdx,
     google: { query: googleQuery, ever: googleEver, items: googleItems, setItems: setGoogleItems, setLoading: setGoogleLoading },
     runSearch, pick, confirm, again, cancel, canRate, sendFeedback, dismissFeedback,
   };
