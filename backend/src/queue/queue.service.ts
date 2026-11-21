@@ -769,13 +769,19 @@ export class QueueService {
    * Latido de la TV cada ~5 s: marca que sigue viva y guarda en que segundo va la cancion.
    * Sin lock ni transaccion (es muy frecuente); solo guarda la posicion si requestId es la que suena ahora.
    */
-  async playerHeartbeat(businessId: string, requestId?: string, positionSec?: number) {
+  async playerHeartbeat(businessId: string, requestId?: string, positionSec?: number, durationSec?: number) {
     const s = await this.activeSession(this.prisma, businessId);
     if (!s) return { ok: true };
     const data: { tvLastSeenAt: Date; positionSec?: number } = { tvLastSeenAt: new Date() };
-    if (requestId && positionSec !== undefined) {
-      const cur = await this.prisma.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' }, select: { id: true } });
-      if (cur?.id === requestId) data.positionSec = Math.max(0, Math.floor(positionSec));
+    if (requestId && (positionSec !== undefined || durationSec !== undefined)) {
+      const cur = await this.prisma.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' }, select: { id: true, durationSec: true } });
+      if (cur?.id === requestId) {
+        if (positionSec !== undefined) data.positionSec = Math.max(0, Math.floor(positionSec));
+        // La duracion real la conoce el reproductor (YouTube getDuration / video local): si difiere de la
+        // que trajo la busqueda (o si no habia), se corrige la ficha de la cancion. Solo escribe cuando cambia.
+        const dur = durationSec && durationSec > 0 ? Math.floor(durationSec) : null;
+        if (dur && cur.durationSec !== dur) await this.prisma.songRequest.update({ where: { id: cur.id }, data: { durationSec: dur } }).catch(() => {});
+      }
     }
     const wasDown = !s.tvLastSeenAt || Date.now() - s.tvLastSeenAt.getTime() > 20_000;
     await this.prisma.karaokeSession.update({ where: { id: s.id }, data });
