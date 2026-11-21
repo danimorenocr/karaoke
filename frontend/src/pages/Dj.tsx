@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
 import DjSearch from '../components/DjSearch';
@@ -61,9 +61,16 @@ export default function Dj() {
   const run = useAction(toast);
   const user = auth.user();
 
+  // --- Reordenar la cola arrastrando (tactil y mouse); las flechas quedan de respaldo ---
+  type DragData = { from: number; to: number; startY: number; scroll0: number; tops: number[]; heights: number[]; gap: number };
+  const [drag, setDrag] = useState<{ id: string; from: number; to: number; offset: number; size: number } | null>(null);
+  const dragData = useRef<DragData | null>(null);
+  const queueListRef = useRef<HTMLDivElement | null>(null);
+
   const load = useCallback(async () => {
     try {
       const data = await api('GET', '/dj/queue');
+      if (dragData.current) return; // no pisar la cola mientras se arrastra
       setS(data);
       setTvConnected(data.tvConnected);
     } catch (e: any) {
@@ -114,6 +121,62 @@ export default function Dj() {
     if (j < 0 || j >= ids.length) return;
     [ids[i], ids[j]] = [ids[j], ids[i]];
     act('PATCH', '/dj/queue/reorder', { ids });
+  };
+
+  /** Aplica el nuevo orden al instante y lo confirma con el backend; si falla, recarga el orden real. */
+  const applyReorder = (from: number, to: number) => {
+    if (!s) return;
+    const q = [...s.queue];
+    const [item] = q.splice(from, 1);
+    q.splice(to, 0, item);
+    setS((p: any) => (p ? { ...p, queue: q } : p));
+    run(async () => {
+      try {
+        await api('PATCH', '/dj/queue/reorder', { ids: q.map((r: any) => r.id) });
+        await load();
+      } catch (e) {
+        await load(); // restaura el orden real si el backend rechazo el cambio
+        throw e;
+      }
+    });
+  };
+
+  /** Arrastre con puntero (dedo o mouse): mide las filas, mueve la tarjeta y desplaza las demas. */
+  const onDragStart = (e: ReactPointerEvent, i: number) => {
+    const list = queueListRef.current;
+    if (!list || !s || s.queue.length < 2) return;
+    e.preventDefault();
+    const rows = Array.from(list.children) as HTMLElement[];
+    const tops = rows.map((r) => r.offsetTop);
+    const heights = rows.map((r) => r.offsetHeight);
+    const gap = rows.length > 1 ? tops[1] - tops[0] - heights[0] : 8;
+    const id = s.queue[i].id;
+    const d: DragData = { from: i, to: i, startY: e.clientY, scroll0: window.scrollY, tops, heights, gap };
+    dragData.current = d;
+    setDrag({ id, from: i, to: i, offset: 0, size: heights[i] + gap });
+
+    const onMove = (ev: PointerEvent) => {
+      const offset = ev.clientY - d.startY + (window.scrollY - d.scroll0);
+      const center = d.tops[d.from] + d.heights[d.from] / 2 + offset;
+      let to = 0;
+      for (let k = 0; k < d.tops.length; k++) if (center > d.tops[k] + d.heights[k] / 2) to = k;
+      d.to = to;
+      // Desplaza la pagina al arrastrar cerca de los bordes de la pantalla
+      if (ev.clientY < 90) window.scrollBy(0, -12);
+      else if (ev.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+      setDrag({ id, from: d.from, to, offset, size: d.heights[d.from] + d.gap });
+    };
+    const onEnd = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      dragData.current = null;
+      setDrag(null);
+      if (d.to !== d.from) applyReorder(d.from, d.to);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
   };
 
   // Alerta si la TV se desconecta con la sesion en marcha (se espera 8 s para ignorar parpadeos de red)
@@ -333,21 +396,41 @@ export default function Dj() {
                   <p className="p-6 text-center text-sm text-slate-500">La cola está vacía.</p>
                 ) : (
                   <div className="space-y-2">
-                    {s.queue.map((r: any, i: number) => (
-                      <div key={r.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-2.5">
-                        <div className="w-6 text-center text-sm font-bold text-slate-500">{i + 1}</div>
-                        <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">{r.title}</div>
-                          <div className="text-xs text-slate-400">{r.tableName}</div>
-                        </div>
-                        <div className="flex gap-1">
-                          <button title="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="up" className="h-4 w-4" /></button>
-                          <button title="Bajar" disabled={i === s.queue.length - 1} onClick={() => move(i, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="downArrow" className="h-4 w-4" /></button>
-                          <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
-                        </div>
-                      </div>
-                    ))}
+                    <div ref={queueListRef} className="relative space-y-2">
+                      {s.queue.map((r: any, i: number) => {
+                        const d = drag && drag.id === r.id ? drag : null;
+                        let shift = 0;
+                        if (drag && !d) {
+                          if (i > drag.from && i <= drag.to) shift = -drag.size;
+                          else if (i < drag.from && i >= drag.to) shift = drag.size;
+                        }
+                        return (
+                          <div key={r.id}
+                            className={`flex items-center gap-3 rounded-xl border bg-white/[0.04] p-2.5 ${d ? 'relative z-10 select-none border-white/25 shadow-xl shadow-black/50' : 'border-white/10'}`}
+                            style={{
+                              transform: d ? `translateY(${d.offset}px)` : shift ? `translateY(${shift}px)` : undefined,
+                              transition: d ? undefined : 'transform 150ms ease',
+                              backgroundColor: d ? '#0d1117' : undefined,
+                            }}>
+                            <span title="Arrastra para reordenar" onPointerDown={(e) => onDragStart(e, i)}
+                              className="-ml-1 grid h-9 w-6 shrink-0 cursor-grab touch-none place-items-center text-slate-500 hover:text-slate-300 active:cursor-grabbing">
+                              <Icon name="grip" className="h-4 w-4" />
+                            </span>
+                            <div className="w-6 text-center text-sm font-bold text-slate-500">{d ? d.to + 1 : i + 1}</div>
+                            <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium">{r.title}</div>
+                              <div className="text-xs text-slate-400">{r.tableName}</div>
+                            </div>
+                            <div className="flex gap-1">
+                              <button title="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="up" className="h-4 w-4" /></button>
+                              <button title="Bajar" disabled={i === s.queue.length - 1} onClick={() => move(i, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="downArrow" className="h-4 w-4" /></button>
+                              <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                     {s.autoQueue?.length > 0 && (
                       <>
                         <div className="flex items-center gap-2 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
