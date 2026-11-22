@@ -109,12 +109,12 @@ export default function Tv() {
     if (curSource.current === 'LOCAL') {
       const v = videoRef.current;
       const has = !!v && !!v.getAttribute('src');
-      return { has, active: has && v!.readyState >= 2 && !v!.ended, paused: has && v!.paused && !v!.ended, t: v?.currentTime ?? 0 };
+      return { has, active: has && v!.readyState >= 2 && !v!.ended, paused: has && v!.paused && !v!.ended, t: v?.currentTime ?? 0, d: v && isFinite(v.duration) ? v.duration : 0 };
     }
     const p = playerRef.current;
     const st = p?.getPlayerState?.();
     const PS = window.YT?.PlayerState;
-    return { has: !!p?.getPlayerState, active: st === PS?.PLAYING || st === PS?.PAUSED, paused: st === PS?.PAUSED || st === PS?.CUED || st === PS?.UNSTARTED, t: Number(p?.getCurrentTime?.() ?? 0) };
+    return { has: !!p?.getPlayerState, active: st === PS?.PLAYING || st === PS?.PAUSED, paused: st === PS?.PAUSED || st === PS?.CUED || st === PS?.UNSTARTED, t: Number(p?.getCurrentTime?.() ?? 0), d: Number(p?.getDuration?.() ?? 0) };
   }
   function startPlayback(cur: any, startSec: number) {
     if (cur.source === 'LOCAL') {
@@ -272,7 +272,9 @@ export default function Tv() {
       const id = loadedId.current;
       const info = engineInfo();
       const sendPos = id && !holdRef.current && info.active;
-      api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(info.t) } : {}).catch(() => {});
+      // Manda tambien la duracion real del video: la busqueda no siempre la trae y la barra del DJ la necesita
+      const dur = sendPos && info.d > 0 && isFinite(info.d) ? Math.floor(info.d) : undefined;
+      api('POST', '/player/heartbeat', sendPos ? { requestId: id, positionSec: Math.floor(info.t), ...(dur ? { durationSec: dur } : {}) } : {}).catch(() => {});
     }, 5000);
     // Vigilante: si deberia estar sonando (el DJ no pauso) y el reproductor esta detenido, lo reanuda.
     // Cubre el caso de que el navegador pause el video al cambiar de pestana o ventana.
