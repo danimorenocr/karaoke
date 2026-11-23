@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Module, NotFoundException, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsHexColor, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -352,14 +352,21 @@ class AdminService {
     return { ok: true };
   }
 
-  async history(businessId: string) {
+  /** Historial paginado de 10 en 10. filter: played (reproducidas), failed (con fallo) o all (todas). */
+  async history(businessId: string, filter = 'played', page = 1) {
     await this.plans.require(businessId, 'history');
-    return this.prisma.songRequest.findMany({
-      where: { businessId },
-      orderBy: { requestedAt: 'desc' },
-      take: 200,
-      select: { id: true, title: true, status: true, requestedAt: true, rejectionReason: true, table: { select: { name: true } } },
-    });
+    const where: any = { businessId, ...(filter === 'failed' ? { status: 'FAILED' } : filter === 'all' ? {} : { status: 'COMPLETED' }) };
+    const [total, items] = await Promise.all([
+      this.prisma.songRequest.count({ where }),
+      this.prisma.songRequest.findMany({
+        where,
+        orderBy: { requestedAt: 'desc' },
+        skip: (Math.max(1, page) - 1) * 10,
+        take: 10,
+        select: { id: true, title: true, status: true, requestedAt: true, rejectionReason: true, table: { select: { name: true } } },
+      }),
+    ]);
+    return { items, total, page: Math.max(1, page), pageSize: 10 };
   }
 }
 
@@ -404,7 +411,7 @@ class AdminController {
   @Get('staff') staff(@CurrentUser() u: AuthUser) { return this.s.listStaff(u.businessId!); }
   @Post('staff') addDj(@CurrentUser() u: AuthUser, @Body() dto: CreateStaffDto) { return this.s.createDj(u.businessId!, dto); }
   @Patch('staff/:id/active') staffActive(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: StatusDto) { return this.s.setStaffActive(u.businessId!, id, b.active); }
-  @Get('history') history(@CurrentUser() u: AuthUser) { return this.s.history(u.businessId!); }
+  @Get('history') history(@CurrentUser() u: AuthUser, @Query('filter') filter?: string, @Query('page') page?: string) { return this.s.history(u.businessId!, filter, Math.floor(Number(page)) || 1); }
 }
 
 @Module({ controllers: [SuperController, AdminController], providers: [AdminService] })

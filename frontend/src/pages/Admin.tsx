@@ -37,7 +37,7 @@ const HERO: Record<Tab, [string, string]> = {
   settings: ['Configuración', 'Identidad del bar y reglas para las solicitudes de canciones.'],
   library: ['Biblioteca local', 'Videos guardados en el PC del bar: se buscan primero, antes que en YouTube.'],
   staff: ['Equipo', 'Crea cuentas para tus DJs y gestiona su acceso.'],
-  history: ['Historial', 'Las últimas 200 solicitudes de tu negocio.'],
+  history: ['Historial', 'Canciones reproducidas, de 10 en 10. Filtra por las que fallaron o mira todas las solicitudes.'],
 };
 
 /** Nombre de la mesa con edicion en el lugar (lapiz -> escribir -> Enter o Guardar). */
@@ -421,7 +421,6 @@ export default function Admin() {
   const [biz, setBiz] = useState<any>(null);
   const [tables, setTables] = useState<any[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
   const [dj, setDj] = useState({ name: '', email: '', password: '' });
   const { toast, node } = useToast();
   const run = useAction(toast);
@@ -429,8 +428,8 @@ export default function Admin() {
   const load = useCallback(async () => {
     const b = await api('GET', '/admin/business');
     const has = (f: string) => (b.features ?? []).includes(f);
-    const [t, s, h] = await Promise.all([api('GET', '/admin/tables'), has('staff') ? api('GET', '/admin/staff') : [], has('history') ? api('GET', '/admin/history') : []]);
-    setBiz(b); setTables(t); setStaff(s); setHistory(h);
+    const [t, s] = await Promise.all([api('GET', '/admin/tables'), has('staff') ? api('GET', '/admin/staff') : []]);
+    setBiz(b); setTables(t); setStaff(s);
   }, []);
   useEffect(() => { load().catch((e) => toast(e.message, true)); }, [load]);
 
@@ -501,36 +500,76 @@ export default function Admin() {
         </div>
       )}
 
-      {curTab === 'history' && (
-        <Card title="Últimas 200 solicitudes">
-          {history.length === 0 ? (
-            <Empty>Todavía no hay solicitudes.</Empty>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[40rem] text-sm">
-                <thead className="text-left text-xs uppercase text-slate-500">
-                  <tr><th className="pb-2 font-medium">Fecha</th><th className="pb-2 font-medium">Canción</th><th className="pb-2 font-medium">Mesa</th><th className="pb-2 text-right font-medium">Estado</th></tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {history.map((r) => {
-                    const [tone, label] = STATUS[r.status] ?? ['slate', r.status];
-                    return (
-                      <tr key={r.id}>
-                        <td className="whitespace-nowrap py-2.5 pr-4 text-slate-500">{new Date(r.requestedAt).toLocaleString()}</td>
-                        <td className="max-w-0 truncate py-2.5 pr-4">{r.title}</td>
-                        <td className="whitespace-nowrap py-2.5 pr-4 text-slate-400">{r.table.name}</td>
-                        <td className="py-2.5 text-right"><Badge tone={tone}>{label}</Badge></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      )}
+      {curTab === 'history' && <HistoryView toast={toast} />}
       {node}
     </Shell>
+  );
+}
+
+const HISTORY_FILTERS: [string, string][] = [['played', 'Reproducidas'], ['failed', 'Con fallo'], ['all', 'Todas']];
+
+/** Historial paginado (10 por pagina) con filtro: reproducidas, con fallo o todas. */
+function HistoryView({ toast }: { toast: (m: string, err?: boolean) => void }) {
+  const [filter, setFilter] = useState('played');
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<{ items: any[]; total: number; pageSize: number } | null>(null);
+
+  useEffect(() => {
+    let dead = false;
+    setData(null);
+    api('GET', `/admin/history?filter=${filter}&page=${page}`)
+      .then((d) => { if (!dead) setData(d); })
+      .catch((e) => { if (!dead) toast(e.message, true); });
+    return () => { dead = true; };
+  }, [filter, page]);
+
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  return (
+    <Card title="Historial de canciones">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {HISTORY_FILTERS.map(([id, label]) => (
+          <button key={id} type="button" onClick={() => { setFilter(id); setPage(1); }}
+            className="rounded-full border px-3 py-1.5 text-sm font-medium"
+            style={filter === id ? { background: ACCENT, borderColor: ACCENT, color: '#04202a' } : { borderColor: 'rgba(255,255,255,.15)', color: '#cbd5e1' }}>
+            {label}
+          </button>
+        ))}
+        {data && <span className="ml-auto text-xs text-slate-500">{data.total} en total</span>}
+      </div>
+      {!data ? (
+        <p className="p-6 text-center text-sm text-slate-500">Cargando...</p>
+      ) : data.items.length === 0 ? (
+        <Empty>{filter === 'failed' ? 'No hay canciones con fallo.' : filter === 'played' ? 'Todavía no se ha reproducido ninguna canción.' : 'Todavía no hay solicitudes.'}</Empty>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead className="text-left text-xs uppercase text-slate-500">
+              <tr><th className="pb-2 font-medium">Fecha</th><th className="pb-2 font-medium">Canción</th><th className="pb-2 font-medium">Mesa</th><th className="pb-2 text-right font-medium">Estado</th></tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {data.items.map((r) => {
+                const [tone, label] = STATUS[r.status] ?? ['slate', r.status];
+                return (
+                  <tr key={r.id}>
+                    <td className="whitespace-nowrap py-2.5 pr-4 text-slate-500">{new Date(r.requestedAt).toLocaleString()}</td>
+                    <td className="max-w-0 truncate py-2.5 pr-4">{r.title}</td>
+                    <td className="whitespace-nowrap py-2.5 pr-4 text-slate-400">{r.table.name}</td>
+                    <td className="py-2.5 text-right"><Badge tone={tone}>{label}</Badge></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data && data.total > data.pageSize && (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <Btn type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Anterior</Btn>
+          <span className="text-slate-400">Página {page} de {pages}</span>
+          <Btn type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Siguiente</Btn>
+        </div>
+      )}
+    </Card>
   );
 }
 
