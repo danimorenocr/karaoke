@@ -344,9 +344,9 @@ export class QueueService {
         startedAt: session.startedAt,
       },
       current: current && this.view(current),
-      queue: queue.map((r) => this.view(r)),
-      autoQueue: autoQueue.map((r) => this.view(r)),
-      pending: pending.map((r) => this.view(r)),
+      queue: this.withProbe(queue.map((r) => this.view(r))),
+      autoQueue: this.withProbe(autoQueue.map((r) => this.view(r))),
+      pending: this.withProbe(pending.map((r) => this.view(r))),
       history: history.map((r) => this.view(r)),
       // Mesas con canciones en espera primero (para poder desvincularlas)
       tables: tableRows
@@ -780,6 +780,43 @@ export class QueueService {
     });
   }
 
+  // ---------- prueba en vivo (panel DJ) ----------
+
+  /** Solicitudes ya probadas por el reproductor oculto del panel DJ (en memoria; tras un despliegue se prueban de nuevo una vez). */
+  private probed = new Set<string>();
+  /** Solicitudes cuya prueba confirmo que YouTube las bloquea: quedan en la cola marcadas "va a fallar" y el DJ decide. */
+  private willFail = new Set<string>();
+
+  /** Marca en las listas del panel cuales solicitudes de YouTube aun no pasan la prueba en vivo y cuales ya se sabe que fallaran. */
+  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean; willFail: boolean })[] {
+    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id), willFail: this.willFail.has(r.id) }));
+  }
+
+  /**
+   * Resultado de la prueba en vivo del panel DJ: un reproductor oculto carga el video antes de que llegue a la TV.
+   * Nada se rechaza ni se salta solo: si YouTube confirma el bloqueo (100 no existe/privado, 101/150 el dueno no
+   * permite incrustarlo), la solicitud QUEDA en la cola marcada "va a fallar" y el DJ decide si la quita o la deja.
+   * Ademas el video se recuerda para no volver a ofrecerse en las busquedas. Si se reprodujo, dio otro codigo
+   * (puede ser pasajero o del entorno, como el 153) o no se pudo comprobar, sigue su curso normal:
+   * la TV es la ultima palabra y la saltaria como hasta ahora.
+   */
+  async probeResult(businessId: string, requestId: string, outcome: 'ok' | 'error' | 'timeout', code?: number) {
+    const r = await this.prisma.songRequest.findFirst({
+      where: { id: requestId, businessId },
+      select: { id: true, status: true, videoId: true, source: true },
+    });
+    if (!r) throw new NotFoundException('Solicitud no encontrada');
+    if (r.source === 'LOCAL' || !['PENDING', 'APPROVED'].includes(r.status)) return { ok: true, ignored: true };
+    this.probed.add(r.id);
+    if (this.probed.size > 3000) this.probed = new Set([...this.probed].slice(-1500));
+    if (outcome !== 'error' || !(code === 100 || code === 101 || code === 150)) return { ok: true };
+    this.willFail.add(r.id);
+    if (this.willFail.size > 3000) this.willFail = new Set([...this.willFail].slice(-1500));
+    await this.yt.markBlocked(r.videoId); // no se vuelve a ofrecer en las busquedas
+    this.rt.queueUpdated(businessId); // el panel abierto ve la marca al instante
+    return { ok: true, willFail: true };
+  }
+
   /** Vuelve a poner al frente una cancion fallida/saltada/completada. */
   retry(businessId: string, id: string) {
     return this.locked(businessId, async (tx) => {
@@ -838,7 +875,8 @@ export class QueueService {
   }
 
   async playerError(businessId: string, requestId: string, code?: number) {
-    // 100 no existe/privado, 101/150 el dueno bloqueo la reproduccion incrustada: es permanente, se recuerda
+    // 100 no existe/privado, 101/150 el dueno bloqueo la reproduccion incrustada: es permanente, se recuerda.
+    // El 153 (referencia del reproductor) no se memoriza: no es del video, afectaria a todos por igual.
     if (code === 100 || code === 101 || code === 150) {
       const cur = await this.prisma.songRequest.findFirst({ where: { id: requestId, status: 'PLAYING' }, select: { videoId: true, source: true } });
       if (cur && cur.source !== 'LOCAL') await this.yt.markBlocked(cur.videoId);

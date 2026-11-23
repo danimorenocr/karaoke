@@ -2,6 +2,7 @@ import { PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, u
 import { api, auth, connectSocket, fmtDuration } from '../lib/api';
 import { Thumb, useAction, useToast } from '../components/ui';
 import DjSearch from '../components/DjSearch';
+import SongProbe, { ProbeOutcome } from '../components/SongProbe';
 import SongProgress from '../components/SongProgress';
 import { ACCENT, Btn, Icon, NavItem, Shell } from '../components/kit';
 const STATUS_LABEL: Record<string, [string, string]> = {
@@ -266,6 +267,14 @@ export default function Dj() {
 
   if (!s) return <div className="grid min-h-screen place-items-center bg-[#05060a] text-slate-500">Cargando...</div>;
   const session = s.session;
+  // Solicitudes que el reproductor oculto aun no ha probado (las marca el backend con needsProbe)
+  const probeItems = [...(s.pending ?? []), ...(s.queue ?? []), ...(s.autoQueue ?? [])]
+    .filter((r: any) => r.needsProbe)
+    .map((r: any) => ({ id: r.id, videoId: r.videoId }));
+  /** El reproductor oculto avisa y se reporta; si YouTube la bloquea, el backend la marca "va a fallar" y el DJ decide. */
+  const reportProbe = (id: string, outcome: ProbeOutcome, code?: number) => {
+    api('POST', '/dj/probe', { requestId: id, outcome, code }).then(load).catch(() => {});
+  };
   const [title, subtitle] = HERO[tab];
   const links: [string, string, 'tv' | 'home'][] = [['/tv', 'Pantalla TV', 'tv']];
   if (user?.role === 'ADMIN') links.push(['/admin', 'Panel admin', 'home']);
@@ -319,6 +328,8 @@ export default function Dj() {
 
   return (
     <Shell nav={NAV} active={tab} onNav={(id) => setTab(id as Tab)} eyebrow="Panel DJ" title={title} subtitle={subtitle} org={s.business.name} links={links}>
+      {/* Reproductor oculto: prueba que YouTube deje reproducir cada cancion antes de que llegue a la TV */}
+      <SongProbe items={probeItems} onResult={reportProbe} />
       {/* Estado y control de sesion */}
       <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-white/[0.07] pb-5">
         <p className="text-sm text-slate-400">
@@ -447,6 +458,8 @@ export default function Dj() {
                             <div className="text-xs text-slate-400">
                               <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-slate-200">{r.tableName}</span>
                               {r.durationSec ? <span className="ml-2">{fmtDuration(r.durationSec)}</span> : null}
+                              {r.needsProbe && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-300">Comprobando…</span>}
+                              {r.willFail && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
                             </div>
                           </div>
                           <Btn kind="ok" onClick={() => act('PATCH', `/dj/requests/${r.id}/approve`)}>Aprobar</Btn>
@@ -517,6 +530,8 @@ export default function Dj() {
                               <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium">{r.title}</div>
+                                {r.needsProbe && <div className="text-xs text-amber-300">Comprobando…</div>}
+                                {r.willFail && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea</div>}
                               </div>
                               <div className="flex gap-1">
                                 <select
@@ -550,7 +565,7 @@ export default function Dj() {
                             <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{r.title}</div>
-                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}</div>
+                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}{r.needsProbe && <> · <span className="text-amber-300">Comprobando…</span></>}{r.willFail && <> · <span className="font-semibold text-red-300">Va a fallar</span></>}</div>
                             </div>
                             <button title="Quitar" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
                           </div>

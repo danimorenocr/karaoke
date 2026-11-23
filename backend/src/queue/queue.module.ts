@@ -42,6 +42,12 @@ class RequestRefDto {
   /** Codigo de error del reproductor de YouTube (solo en /player/error). */
   @IsOptional() @IsInt() code?: number;
 }
+class ProbeDto {
+  @IsString() requestId: string;
+  /** ok = sonó; error = YouTube la bloqueó (con code); timeout = no se pudo comprobar. */
+  @IsIn(['ok', 'error', 'timeout']) outcome: 'ok' | 'error' | 'timeout';
+  @IsOptional() @IsInt() code?: number;
+}
 
 import { PlansService } from '../plans/plans.service';
 import { AgentService } from '../agent/agent.module';
@@ -68,6 +74,8 @@ class DjController {
 
 
   @Get('queue') queue(@CurrentUser() u: AuthUser) { return this.q.djState(biz(u)); }
+  /** El panel prueba cada cancion en un reproductor oculto y avisa el resultado (antes de que llegue a la TV). */
+  @Post('probe') probe(@CurrentUser() u: AuthUser, @Body() b: ProbeDto) { return this.q.probeResult(biz(u), b.requestId, b.outcome, b.code); }
   @Post('session/start') start(@CurrentUser() u: AuthUser) { return this.q.startSession(biz(u)); }
   @Post('session/stop') stop(@CurrentUser() u: AuthUser) { return this.q.stopSession(biz(u)); }
   @Patch('session/requests-open') open(@CurrentUser() u: AuthUser, @Body() b: FlagDto) { return this.q.setRequestsOpen(biz(u), b.value); }
