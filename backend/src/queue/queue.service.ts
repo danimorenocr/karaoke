@@ -344,9 +344,9 @@ export class QueueService {
         startedAt: session.startedAt,
       },
       current: current && this.view(current),
-      queue: queue.map((r) => this.view(r)),
-      autoQueue: autoQueue.map((r) => this.view(r)),
-      pending: pending.map((r) => this.view(r)),
+      queue: this.withProbe(queue.map((r) => this.view(r))),
+      autoQueue: this.withProbe(autoQueue.map((r) => this.view(r))),
+      pending: this.withProbe(pending.map((r) => this.view(r))),
       history: history.map((r) => this.view(r)),
       // Mesas con canciones en espera primero (para poder desvincularlas)
       tables: tableRows
@@ -780,6 +780,54 @@ export class QueueService {
     });
   }
 
+  // ---------- prueba en vivo (panel DJ) ----------
+
+  /** Solicitudes ya probadas por el reproductor oculto del panel DJ (en memoria; tras un despliegue se prueban de nuevo una vez). */
+  private probed = new Set<string>();
+
+  /** Marca en las listas del panel cuales solicitudes de YouTube aun no pasan la prueba en vivo. */
+  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean })[] {
+    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id) }));
+  }
+
+  /**
+   * Resultado de la prueba en vivo del panel DJ: un reproductor oculto carga el video antes de que llegue a la TV.
+   * Solo se rechaza cuando YouTube confirma el bloqueo (100 no existe/privado, 101/150 el dueno no permite
+   * incrustarlo): la mesa puede pedir otra y el video no se vuelve a ofrecer. Si se reprodujo, dio otro codigo
+   * (puede ser pasajero o del entorno, como el 153) o no se pudo comprobar, la cancion sigue su curso:
+   * la TV es la ultima palabra y la saltaria como hasta ahora.
+   */
+  async probeResult(businessId: string, requestId: string, outcome: 'ok' | 'error' | 'timeout', code?: number) {
+    const r = await this.prisma.songRequest.findFirst({
+      where: { id: requestId, businessId },
+      select: { id: true, status: true, videoId: true, source: true, sessionId: true, tableId: true },
+    });
+    if (!r) throw new NotFoundException('Solicitud no encontrada');
+    if (r.source === 'LOCAL' || !['PENDING', 'APPROVED'].includes(r.status)) return { ok: true, ignored: true };
+    this.probed.add(r.id);
+    if (this.probed.size > 3000) this.probed = new Set([...this.probed].slice(-1500));
+    if (outcome !== 'error' || !(code === 100 || code === 101 || code === 150)) return { ok: true };
+    return this.locked(businessId, async (tx) => {
+      const cur = await tx.songRequest.findFirst({ where: { id: r.id }, select: { status: true } });
+      if (!cur || !['PENDING', 'APPROVED'].includes(cur.status)) return { ok: true, ignored: true };
+      await tx.songRequest.update({
+        where: { id: r.id },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: 'YouTube no deja reproducir esta cancion fuera de su app. Elige otra.',
+          approvedAt: null,
+          completedAt: new Date(),
+        },
+      });
+      this.events.record({
+        businessId, sessionId: r.sessionId, tableId: r.tableId, type: 'REQUEST_REJECTED',
+        metadata: { requestId: r.id, reason: 'youtube-blocked', code },
+      });
+      await this.yt.markBlocked(r.videoId);
+      return { ok: true, rejected: true };
+    });
+  }
+
   /** Vuelve a poner al frente una cancion fallida/saltada/completada. */
   retry(businessId: string, id: string) {
     return this.locked(businessId, async (tx) => {
@@ -838,7 +886,8 @@ export class QueueService {
   }
 
   async playerError(businessId: string, requestId: string, code?: number) {
-    // 100 no existe/privado, 101/150 el dueno bloqueo la reproduccion incrustada: es permanente, se recuerda
+    // 100 no existe/privado, 101/150 el dueno bloqueo la reproduccion incrustada: es permanente, se recuerda.
+    // El 153 (referencia del reproductor) no se memoriza: no es del video, afectaria a todos por igual.
     if (code === 100 || code === 101 || code === 150) {
       const cur = await this.prisma.songRequest.findFirst({ where: { id: requestId, status: 'PLAYING' }, select: { videoId: true, source: true } });
       if (cur && cur.source !== 'LOCAL') await this.yt.markBlocked(cur.videoId);
