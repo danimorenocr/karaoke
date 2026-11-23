@@ -80,7 +80,7 @@ export default function Dj() {
   type DragData = { from: number; to: number; startY: number; scroll0: number; tops: number[]; heights: number[]; gap: number };
   const [drag, setDrag] = useState<{ id: string; from: number; to: number; offset: number; size: number } | null>(null);
   // Alternativas de YouTube para canciones marcadas "va a fallar", por solicitud
-  const [alts, setAlts] = useState<Record<string, { loading?: boolean; items?: any[]; none?: boolean }>>({});
+  const [alts, setAlts] = useState<Record<string, { loading?: boolean; items?: any[]; none?: boolean; reason?: string | null }>>({});
   const dragData = useRef<DragData | null>(null);
   const [gdrag, setGdrag] = useState<{ key: string; from: number; to: number; offset: number; size: number } | null>(null);
   const queueListRef = useRef<HTMLDivElement | null>(null);
@@ -282,7 +282,7 @@ export default function Dj() {
   const findAlts = (id: string) => {
     setAlts((p) => ({ ...p, [id]: { loading: true } }));
     api('POST', '/dj/alternatives', { requestId: id })
-      .then((r) => setAlts((p) => ({ ...p, [id]: { items: r?.items ?? [], none: !(r?.items ?? []).length } })))
+      .then((r) => setAlts((p) => ({ ...p, [id]: { items: r?.items ?? [], none: !(r?.items ?? []).length, reason: r?.reason } })))
       .catch(() => setAlts((p) => ({ ...p, [id]: { none: true } })));
   };
   /** Cambia la cancion por la version elegida; la prueba en vivo la vuelve a comprobar sola. */
@@ -295,7 +295,14 @@ export default function Dj() {
     const a = alts[r.id];
     if (!a) return null;
     if (a.loading) return <div className="mt-1.5 text-xs text-slate-400">Buscando otra versión…</div>;
-    if (a.none) return <div className="mt-1.5 text-xs text-slate-500">No encontré otra versión que sirva.</div>;
+    if (a.none) return (
+      <div className="mt-1.5 text-xs text-slate-500">
+        {a.reason === 'quota' ? 'Se agotó la cuota de búsqueda de YouTube por hoy: pega el link de otra versión en “Agregar canción”.'
+          : a.reason === 'error' ? 'YouTube no respondió. Inténtalo de nuevo en un momento.'
+          : 'No encontré otra versión que sirva.'}
+        <button onClick={() => { setAlts((p) => { const n = { ...p }; delete n[r.id]; return n; }); findAlts(r.id); }} className="ml-2 font-semibold text-slate-300 underline">Reintentar</button>
+      </div>
+    );
     return (
       <div className="mt-1.5 space-y-1">
         {(a.items ?? []).map((v: any) => (
@@ -500,7 +507,8 @@ export default function Dj() {
                               <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-slate-200">{r.tableName}</span>
                               {r.durationSec ? <span className="ml-2">{fmtDuration(r.durationSec)}</span> : null}
                               {r.needsProbe && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-300">Comprobando…</span>}
-                              {r.willFail && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
+                              {r.downloading && <span className="ml-2 rounded bg-sky-500/20 px-1.5 py-0.5 font-medium text-sky-300" title="YouTube no la deja reproducir; el agente del bar la está bajando">Descargando…</span>}
+                              {r.willFail && !r.downloading && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
                               {altBtn(r)}
                             </div>
                             {altBlock(r)}
@@ -574,7 +582,8 @@ export default function Dj() {
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium">{r.title}</div>
                                 {r.needsProbe && <div className="text-xs text-amber-300">Comprobando…</div>}
-                                {r.willFail && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea{altBtn(r)}</div>}
+                                {r.downloading && <div className="text-xs font-semibold text-sky-300">Descargando en el bar… sonará cuando termine</div>}
+                                {r.willFail && !r.downloading && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea{altBtn(r)}</div>}
                                 {altBlock(r)}
                               </div>
                               <div className="flex gap-1">

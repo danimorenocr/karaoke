@@ -14,9 +14,14 @@ const dist = path.join(root, 'dist');
 const stage = path.join(dist, 'stage');
 
 const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i > -1 ? process.argv[i + 1] : undefined; };
-const server = (arg('server') || process.env.AGENT_SERVER || 'http://localhost:3000').replace(/\/+$/, '');
+// PowerShell + npm a veces se comen el "--server" y solo pasan la URL: tambien se acepta suelta
+const bareUrl = process.argv.slice(2).find((a) => /^https?:\/\//.test(a));
+const server = (arg('server') || bareUrl || process.env.AGENT_SERVER || 'http://localhost:3000').replace(/\/+$/, '');
 if (!/^https?:\/\//.test(server)) throw new Error(`--server debe empezar por http:// o https:// (recibido: ${server})`);
 if (process.platform !== 'win32') throw new Error('El instalador solo se construye en Windows');
+
+const withYtdlp = !process.argv.includes('--no-ytdlp');
+const vendor = path.join(root, 'vendor'); // descargas en cache (no se vuelven a bajar en cada build)
 
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });
@@ -41,11 +46,47 @@ const exe = path.join(stage, 'karaoke-agent.exe');
 fs.copyFileSync(process.execPath, exe);
 await inject(exe, 'NODE_SEA_BLOB', fs.readFileSync(blob), { sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2' });
 for (const f of ['install.ps1', 'uninstall.ps1']) fs.copyFileSync(path.join(root, 'installer', f), path.join(stage, f));
+
+// 2b) yt-dlp + ffmpeg: para bajar los videos que YouTube no deja incrustar (se instalan en KaraokeAgentin)
+const extra = [];
+if (withYtdlp) {
+  fs.mkdirSync(vendor, { recursive: true });
+  const get = async (url, dest) => {
+    if (fs.existsSync(dest)) return;
+    console.log(`Descargando ${url} ...`);
+    const r = await fetch(url, { redirect: 'follow' });
+    if (!r.ok) throw new Error(`No se pudo bajar ${url}: HTTP ${r.status}`);
+    fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+  };
+  await get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe', path.join(vendor, 'yt-dlp.exe'));
+  const ff = path.join(vendor, 'ffmpeg.exe');
+  if (!fs.existsSync(ff)) {
+    const zip = path.join(vendor, 'ffmpeg.zip');
+    await get('https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip', zip);
+    const out = path.join(vendor, 'ffmpeg-x');
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.mkdirSync(out, { recursive: true });
+    // tar de Windows (bsdtar): extrae solo ffmpeg.exe con un patron (no admite --one-top-level ni --wildcards)
+    try {
+      execFileSync('tar', ['-xf', zip, '-C', out, '*/bin/ffmpeg.exe'], { stdio: 'inherit' });
+    } catch {
+      execFileSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${zip}' -DestinationPath '${out}' -Force`], { stdio: 'inherit' });
+    }
+    const found = fs.readdirSync(out).map((d) => path.join(out, d, 'bin', 'ffmpeg.exe')).find((p) => fs.existsSync(p));
+    if (!found) throw new Error('No se encontro ffmpeg.exe dentro del zip');
+    fs.copyFileSync(found, ff);
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.rmSync(zip, { force: true });
+  }
+  for (const f of ['yt-dlp.exe', 'ffmpeg.exe']) { fs.copyFileSync(path.join(vendor, f), path.join(stage, f)); extra.push(f); }
+} else {
+  console.log('Sin yt-dlp/ffmpeg (--no-ytdlp): el instalador no podra bajar videos bloqueados');
+}
 console.log(`karaoke-agent.exe listo (${(fs.statSync(exe).size / 1048576).toFixed(0)} MB)`);
 
 // 3) IExpress
 const target = path.join(dist, 'KaraokeAgent-Setup.exe');
-const files = ['karaoke-agent.exe', 'install.ps1', 'uninstall.ps1'];
+const files = ['karaoke-agent.exe', 'install.ps1', 'uninstall.ps1', ...extra];
 const sed = `[Version]
 Class=IEXPRESS
 SEDVersion=3
@@ -89,7 +130,8 @@ fs.writeFileSync(sedPath, sed.replace(/\n/g, '\r\n'), 'latin1');
 spawnSync(path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'iexpress.exe'), ['/N', '/Q', sedPath], { stdio: 'inherit' });
 // iexpress puede devolver el control antes de terminar: se espera a que el archivo exista y deje de crecer
 let last = -1;
-for (let i = 0; i < 120; i++) {
+console.log('Empaquetando con IExpress (con yt-dlp y ffmpeg puede tardar varios minutos)...');
+for (let i = 0; i < 1800; i++) { // hasta 15 min
   await new Promise((r) => setTimeout(r, 500));
   const size = fs.existsSync(target) ? fs.statSync(target).size : 0;
   if (size > 0 && size === last) break;

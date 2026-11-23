@@ -1,5 +1,5 @@
 import { KARAOKE_RE, YoutubeService } from '../youtube/youtube.service';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AutoDjMode, Business, Prisma, RequestStatus, SongRequest } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { allowedExperiences } from '../experiences';
@@ -53,6 +53,7 @@ interface Memo<T> { ver: number; at: number; p: Promise<T> }
 export class QueueService {
   /** Sube con cada cambio de cola/solicitudes/votos/ajustes (RealtimeService.queueUpdated): invalida los estados guardados. */
   private gver = 0;
+  private log = new Logger('Queue');
   private pubShared = new Map<string, Memo<any>>();
   private pubTables = new Map<string, Memo<any>>();
   private logos = new Map<string, { v: number; mime: string; buf: Buffer }>();
@@ -60,6 +61,7 @@ export class QueueService {
 
   constructor(private prisma: PrismaService, private rt: RealtimeService, private events: EventsService, private yt: YoutubeService, private plans: PlansService, private agents: AgentService) {
     this.rt.onChange(() => { this.gver++; });
+    this.agents.onDownload((biz, kind, body) => { this.onAgentDownload(biz, kind, body).catch((e) => this.log.warn(`Descarga: ${e.message}`)); });
   }
 
   /** Una sola carga en vuelo por clave y reutilizada mientras no cambie nada. Los errores no se guardan. */
@@ -161,7 +163,8 @@ export class QueueService {
     const playing = await tx.songRequest.findFirst({ where: { sessionId, status: 'PLAYING' } });
     if (playing) return;
     const next = await tx.songRequest.findFirst({
-      where: { sessionId, status: 'APPROVED' },
+      // Las que el agente local aun esta bajando se saltan hasta que esten listas
+      where: { sessionId, status: 'APPROVED', ...(this.downloading.size ? { id: { notIn: [...this.downloading.keys()] } } : {}) },
       orderBy: [{ auto: 'asc' }, { position: 'asc' }, { requestedAt: 'asc' }],
     });
     if (next) {
@@ -788,8 +791,65 @@ export class QueueService {
   private willFail = new Set<string>();
 
   /** Marca en las listas del panel cuales solicitudes de YouTube aun no pasan la prueba en vivo y cuales ya se sabe que fallaran. */
-  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean; willFail: boolean })[] {
-    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id), willFail: this.willFail.has(r.id) }));
+  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean; willFail: boolean; downloading: boolean })[] {
+    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id), willFail: this.willFail.has(r.id), downloading: this.downloading.has(r.id) }));
+  }
+
+  /** Solicitudes que el agente local esta bajando de YouTube (requestId -> businessId); no se reproducen hasta que terminan. */
+  private downloading = new Map<string, string>();
+  /** Solicitudes cuya descarga ya fallo una vez: no se vuelve a intentar (evita bucles). */
+  private dlFailed = new Set<string>();
+
+  /**
+   * Si el video no se puede incrustar (101/150) y el bar tiene el agente local conectado, le pide bajarlo a su carpeta.
+   * Cuando termina, la solicitud pasa a ser un video local con su mesa y su puesto. false = no aplica (se sigue como antes).
+   */
+  private async startDownload(businessId: string, r: { id: string; videoId: string; source: string }) {
+    if (r.source === 'LOCAL' || this.dlFailed.has(r.id) || !/^[\w-]{11}$/.test(r.videoId)) return false;
+    if (this.downloading.has(r.id)) return true;
+    if (!(await this.plans.has(businessId, 'localLibrary'))) return false;
+    if (!this.agents.requestDownload(businessId, { requestId: r.id, videoId: r.videoId })) return false;
+    this.downloading.set(r.id, businessId);
+    // Si el agente no responde en 10 min se da por perdida y se sigue como antes
+    setTimeout(() => {
+      if (this.downloading.delete(r.id)) { this.dlFailed.add(r.id); this.rt.queueUpdated(businessId); }
+    }, 10 * 60_000).unref?.();
+    this.log.log(`Descarga pedida al agente: ${r.videoId}`);
+    return true;
+  }
+
+  private async onAgentDownload(businessId: string, kind: 'done' | 'failed', body: { requestId: string; id?: string; reason?: string }) {
+    if (this.downloading.get(body.requestId) !== businessId) return; // ya no se esperaba (cambiada, quitada o vencida)
+    this.downloading.delete(body.requestId);
+    if (kind === 'failed') {
+      this.dlFailed.add(body.requestId);
+      this.log.warn(`El agente no pudo bajar el video: ${String(body.reason ?? '').slice(0, 200)}`);
+      this.rt.queueUpdated(businessId);
+      return;
+    }
+    if (!body.id || !/^L[\w-]{10}$/.test(body.id)) { this.dlFailed.add(body.requestId); this.rt.queueUpdated(businessId); return; }
+    await this.locked(businessId, async (tx) => {
+      const r = await tx.songRequest.findFirst({ where: { id: body.requestId, businessId, status: { in: ['PENDING', 'APPROVED'] } } });
+      if (!r) return;
+      await tx.songRequest.update({ where: { id: r.id }, data: { videoId: body.id!, source: 'LOCAL', channel: 'En el bar' } });
+      this.probed.delete(r.id);
+      this.willFail.delete(r.id);
+      await this.promote(tx, r.sessionId);
+    });
+  }
+
+  /** La TV no pudo reproducir la cancion actual pero el agente la esta bajando: vuelve a la cola (sin perder mesa ni puesto) y sigue la siguiente. */
+  private deferCurrent(businessId: string, requestId: string) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.activeSession(tx, businessId);
+      if (!s) return { ok: true, ignored: true };
+      const cur = await tx.songRequest.findFirst({ where: { sessionId: s.id, status: 'PLAYING' } });
+      if (!cur || cur.id !== requestId) return { ok: true, ignored: true };
+      await tx.songRequest.update({ where: { id: cur.id }, data: { status: 'APPROVED', startedAt: null } });
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { paused: false, positionSec: 0 } });
+      await this.promote(tx, s.id);
+      return { ok: true, deferred: true };
+    });
   }
 
   /**
@@ -813,6 +873,7 @@ export class QueueService {
     this.willFail.add(r.id);
     if (this.willFail.size > 3000) this.willFail = new Set([...this.willFail].slice(-1500));
     await this.yt.markBlocked(r.videoId); // no se vuelve a ofrecer en las busquedas
+    if ((code === 101 || code === 150) && (await this.startDownload(businessId, r))) { /* el agente la baja: el panel muestra "Descargando" */ }
     this.rt.queueUpdated(businessId); // el panel abierto ve la marca al instante
     return { ok: true, willFail: true };
   }
@@ -835,13 +896,38 @@ export class QueueService {
     const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { searchMode: true } });
     const mode = (await this.plans.has(businessId, 'searchAny')) ? b.searchMode : 'KARAOKE';
     const skip = new Set([r.videoId, ...(this.tried.get(r.id) ?? [])]);
-    let found: Awaited<ReturnType<YoutubeService['searchSongs']>> = [];
-    try { found = await this.yt.searchSongs(r.title, mode); } catch { found = []; }
-    const items = found
-      .filter((v) => !skip.has(v.videoId))
-      .slice(0, 3)
-      .map((v) => ({ videoId: v.videoId, title: v.title, channel: v.channelTitle, thumbnail: v.thumbnail, durationSec: v.durationSec }));
-    return { items };
+    // El titulo del video trae ruido ("Karaoke Version", corchetes, "Official"...): se limpia para buscar la cancion, no esa subida
+    const clean = r.title
+      .replace(/[\[(][^\])]*[\])]/g, ' ')
+      .replace(/(^|[^\p{L}\d])(karaoke|instrumental|version|versi[oó]n|official|oficial|lyrics?|letra|video|audio|hd|4k|con letra|pista|sing[- ]?along|with lyrics)(?![\p{L}\d])/giu, ' ')
+      .replace(/[|"“”]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || r.title;
+    type Found = Awaited<ReturnType<YoutubeService['searchSongs']>>;
+    const seen = new Set(skip);
+    const items: Found = [];
+    let failedWith: 'quota' | 'error' | null = null;
+    // Varias formulas de busqueda hasta reunir 5; la ultima (cualquier version) solo si no hay nada mejor
+    const attempts: [string, 'KARAOKE' | 'ANY'][] = [[clean, mode], [`${clean} pista instrumental`, mode], [`${clean} letra`, 'ANY']];
+    for (const [text, m] of attempts) {
+      if (items.length >= 5) break;
+      if (m === 'ANY' && mode === 'KARAOKE' && items.length > 0) break;
+      try {
+        const found = await this.yt.searchSongs(text, m);
+        for (const v of found) {
+          if (seen.has(v.videoId)) continue;
+          seen.add(v.videoId);
+          items.push(v);
+        }
+      } catch (e: any) {
+        failedWith = e?.getStatus?.() === 429 ? 'quota' : 'error';
+        if (failedWith === 'quota') break;
+      }
+    }
+    // Primero las que no son de sello discografico (suelen estar bloqueadas para incrustar)
+    items.sort((x, y) => Number(!!x.risky) - Number(!!y.risky));
+    const out = items.slice(0, 5).map((v) => ({ videoId: v.videoId, title: v.title, channel: v.channelTitle, thumbnail: v.thumbnail, durationSec: v.durationSec }));
+    return { items: out, reason: out.length ? undefined : failedWith };
   }
 
   /**
@@ -877,6 +963,7 @@ export class QueueService {
         durationSec: v.durationSec ?? null,
       },
     });
+    this.downloading.delete(r.id); // eligio otra version: ya no se espera la descarga
     this.probed.delete(r.id); // vuelve a necesitar la prueba en vivo
     this.willFail.delete(r.id);
     this.rt.queueUpdated(businessId);
@@ -946,6 +1033,10 @@ export class QueueService {
     if (code === 100 || code === 101 || code === 150) {
       const cur = await this.prisma.songRequest.findFirst({ where: { id: requestId, status: 'PLAYING' }, select: { videoId: true, source: true } });
       if (cur && cur.source !== 'LOCAL') await this.yt.markBlocked(cur.videoId);
+      // 101/150: si el agente local puede bajarla, no se descarta: espera en la cola mientras se descarga
+      if (cur && cur.source !== 'LOCAL' && (code === 101 || code === 150) && (await this.startDownload(businessId, { id: requestId, videoId: cur.videoId, source: cur.source }))) {
+        return this.deferCurrent(businessId, requestId);
+      }
     }
     return this.finishCurrent(businessId, requestId, 'FAILED');
   }

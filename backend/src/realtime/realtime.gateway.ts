@@ -31,6 +31,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
    * (la primera consulta tras una suspension tarda segundos). Sin clientes no consulta: no gasta horas de computo.
    */
   onModuleInit() {
+    this.agents.sender = (socketId, event, payload) => { this.server.to(socketId).emit(event, payload); };
     this.keepAlive = setInterval(() => {
       if ((this.server?.engine?.clientsCount ?? 0) > 0) {
         this.prisma.$queryRaw`SELECT 1`.catch((e) => new Logger('KeepAlive').warn(`BD no responde: ${e.message}`));
@@ -104,6 +105,23 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (!biz || !this.agents.setIndex(biz, socket.id, body?.songs)) return { ok: false };
     this.emitAgentStatus(biz);
     return { ok: true, count: this.agents.status(biz).count };
+  }
+
+  /** El agente avisa que termino de bajar un video: { requestId, id } (id = id del archivo en su indice). */
+  @SubscribeMessage('agent.download.done')
+  async agentDownloadDone(@ConnectedSocket() socket: Socket, @MessageBody() body: { requestId?: unknown; id?: unknown }) {
+    await socket.data.ready;
+    const biz = socket.data.agentBiz as string | undefined;
+    if (biz && typeof body?.requestId === 'string' && typeof body?.id === 'string') this.agents.downloadEvent(biz, 'done', body);
+    return { ok: true };
+  }
+
+  @SubscribeMessage('agent.download.failed')
+  async agentDownloadFailed(@ConnectedSocket() socket: Socket, @MessageBody() body: { requestId?: unknown; reason?: unknown }) {
+    await socket.data.ready;
+    const biz = socket.data.agentBiz as string | undefined;
+    if (biz && typeof body?.requestId === 'string') this.agents.downloadEvent(biz, 'failed', body);
+    return { ok: true };
   }
 
   private emitAgentStatus(businessId: string) {

@@ -18,7 +18,7 @@ export function scan(folder) {
   const skipped = [];
   if (!folder) return { songs, files, skipped };
   for (const f of fs.readdirSync(folder, { withFileTypes: true })) {
-    if (IGNORE.has(f.name.toLowerCase())) continue;
+    if (IGNORE.has(f.name.toLowerCase()) || (f.isDirectory() && f.name.startsWith('.'))) continue; // .tmp = descargas en curso
     if (!f.isFile()) { skipped.push({ name: f.name, reason: 'es una subcarpeta (solo se lee la carpeta elegida)' }); continue; }
     const ext = path.extname(f.name).toLowerCase();
     if (!MIME[ext]) {

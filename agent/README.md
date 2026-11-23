@@ -16,6 +16,15 @@ Variables opcionales: `AGENT_PORT` (por defecto 4545; si lo cambias, define `VIT
 
 Formatos: mp4, m4v, mov, webm, mkv (los que reproduce Chrome/Edge con H.264/VP9). El nombre del archivo (sin extensión) es el título y lo que se busca.
 
+## Descarga automática de videos bloqueados (yt-dlp)
+
+Si YouTube no deja reproducir un video incrustado (errores 101/150), el servidor le pide al agente bajarlo. El agente usa `yt-dlp` y `ffmpeg` (720p máx.), lo guarda en la carpeta del bar con el nombre `Título [idDeYouTube].mp4` y la canción pasa a sonar como «En el bar», conservando su mesa y su puesto en la cola. Requiere la función `localLibrary` del plan y el agente conectado.
+
+- El instalador trae `yt-dlp.exe` y `ffmpeg.exe` y los copia a `%LOCALAPPDATA%\KaraokeAgentin`. `npm run build` los descarga una vez a `agent/vendor/` (usa `--no-ytdlp` para omitirlos).
+- `yt-dlp` se actualiza solo (al arrancar y cada 7 días, y una vez más si una descarga falla por extracción).
+- Las descargas en curso usan la subcarpeta oculta `.tmp` de la carpeta del bar (el agente la ignora).
+- Para actualizar un PC que ya tiene el agente basta ejecutar el nuevo `KaraokeAgent-Setup.exe` encima: no hace falta desinstalar y se conservan carpeta y token.
+
 ## Instalador para el PC del cliente
 
 ```

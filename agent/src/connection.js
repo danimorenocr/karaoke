@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import { io } from 'socket.io-client';
-import { scan } from './library.js';
+import { createDownloader } from './downloader.js';
+import { idFor, scan } from './library.js';
+import path from 'node:path';
 
 /** Mantiene la biblioteca indexada y conectada al backend; reconecta sola. */
 export function createAgent(getConfig) {
@@ -8,6 +10,16 @@ export function createAgent(getConfig) {
   let socket = null;
   let watcher = null;
   let timer = null;
+
+  // Videos que YouTube no deja incrustar: el servidor pide bajarlos y quedan en la carpeta como cualquier otro video
+  const downloader = createDownloader({
+    getFolder: () => getConfig().folder,
+    onDone: (requestId, file) => {
+      sync(); // el indice (con el video nuevo) sale antes que el aviso
+      socket?.emit('agent.download.done', { requestId, id: idFor(path.basename(file)) });
+    },
+    onFail: (requestId, reason) => { socket?.emit('agent.download.failed', { requestId, reason }); },
+  });
 
   function sync() {
     const cfg = getConfig();
@@ -56,11 +68,12 @@ export function createAgent(getConfig) {
     socket = io(cfg.server, { auth: { agentToken: cfg.token }, transports: ['websocket'], reconnectionDelayMax: 10_000 });
     socket.on('connect', () => { st.connected = true; if (st.error.startsWith('Servidor')) st.error = ''; sync(); });
     socket.on('disconnect', () => { st.connected = false; });
+    socket.on('agent.download', (job) => { if (job && typeof job.requestId === 'string' && typeof job.videoId === 'string') downloader.enqueue({ requestId: job.requestId, videoId: job.videoId }); });
     socket.on('connect_error', (e) => { st.connected = false; st.error = `Servidor: ${e.message}`; });
   }
 
   return {
-    state: () => ({ count: st.count, songs: st.songs, skipped: st.skipped, connected: st.connected, error: st.error, lastSync: st.lastSync }),
+    state: () => ({ downloads: downloader.state(), count: st.count, songs: st.songs, skipped: st.skipped, connected: st.connected, error: st.error, lastSync: st.lastSync }),
     file: (id) => st.files.get(id),
     /** Se llama al cambiar la configuracion (carpeta, servidor o token). */
     apply() { connect(); watch(); sync(); },
