@@ -271,7 +271,7 @@ export default function Dj() {
   const probeItems = [...(s.pending ?? []), ...(s.queue ?? []), ...(s.autoQueue ?? [])]
     .filter((r: any) => r.needsProbe)
     .map((r: any) => ({ id: r.id, videoId: r.videoId }));
-  /** El reproductor oculto avisa y se reporta; si YouTube la bloquea, el backend la rechaza sola. */
+  /** El reproductor oculto avisa y se reporta; si YouTube la bloquea, el backend la marca "va a fallar" y el DJ decide. */
   const reportProbe = (id: string, outcome: ProbeOutcome, code?: number) => {
     api('POST', '/dj/probe', { requestId: id, outcome, code }).then(load).catch(() => {});
   };
@@ -459,6 +459,7 @@ export default function Dj() {
                               <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-slate-200">{r.tableName}</span>
                               {r.durationSec ? <span className="ml-2">{fmtDuration(r.durationSec)}</span> : null}
                               {r.needsProbe && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-300">Comprobando…</span>}
+                              {r.willFail && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
                             </div>
                           </div>
                           <Btn kind="ok" onClick={() => act('PATCH', `/dj/requests/${r.id}/approve`)}>Aprobar</Btn>
@@ -530,6 +531,7 @@ export default function Dj() {
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium">{r.title}</div>
                                 {r.needsProbe && <div className="text-xs text-amber-300">Comprobando…</div>}
+                                {r.willFail && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea</div>}
                               </div>
                               <div className="flex gap-1">
                                 <select
@@ -563,7 +565,7 @@ export default function Dj() {
                             <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{r.title}</div>
-                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}{r.needsProbe && <> · <span className="text-amber-300">Comprobando…</span></>}</div>
+                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}{r.needsProbe && <> · <span className="text-amber-300">Comprobando…</span></>}{r.willFail && <> · <span className="font-semibold text-red-300">Va a fallar</span></>}</div>
                             </div>
                             <button title="Quitar" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
                           </div>
