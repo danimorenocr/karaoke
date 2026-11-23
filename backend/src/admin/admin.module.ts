@@ -58,6 +58,7 @@ class UpdateBusinessDto {
   @IsOptional() @IsInt() @Min(0) @Max(60) tvInterludeSec?: number;
   @IsOptional() @IsInt() @Min(1) @Max(20) maxPendingPerTable?: number;
   @IsOptional() @IsBoolean() autoApprove?: boolean;
+  @IsOptional() @IsBoolean() showQueue?: boolean;
   @IsOptional() @IsBoolean() voteMode?: boolean;
   @IsOptional() @IsInt() @Min(5) @Max(60) voteSec?: number;
   @IsOptional() @IsIn(['SONG', 'TABLE']) voteScope?: 'SONG' | 'TABLE';

@@ -9,6 +9,9 @@ import { QueueService } from './queue.service';
 class ReorderDto {
   @IsArray() @IsString({ each: true }) ids: string[];
 }
+class TableRefDto {
+  @IsString() tableId: string;
+}
 class ReasonDto {
   @IsOptional() @IsString() @MaxLength(200) reason?: string;
 }
@@ -74,6 +77,7 @@ class DjController {
   @Post('playback/reload') reload(@CurrentUser() u: AuthUser) { return this.q.reloadCurrent(biz(u)); }
   @Patch('requests/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.q.approve(biz(u), id); }
   @Patch('requests/:id/reject') reject(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: ReasonDto) { return this.q.reject(biz(u), id, b.reason); }
+  @Patch('requests/:id/table') reassign(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: TableRefDto) { return this.q.reassignTable(biz(u), id, b.tableId); }
   @Patch('requests/:id/retry') retry(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.q.retry(biz(u), id); }
   @Post('tables/:id/unlink') unlink(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.q.unlinkTable(biz(u), id); }
   @Patch('queue/reorder') reorder(@CurrentUser() u: AuthUser, @Body() b: ReorderDto) { return this.q.reorder(biz(u), b.ids); }

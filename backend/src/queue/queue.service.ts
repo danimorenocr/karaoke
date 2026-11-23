@@ -135,6 +135,25 @@ export class QueueService {
   }
 
   /** Si nada suena y la TV ya fue iniciada, sube la siguiente aprobada (las solicitudes siempre antes que el Auto-DJ). */
+  /** Coloca una cancion en la cola justo despues de la ultima de su misma mesa (si la mesa ya tiene canciones en cola). Reutiliza las mismas posiciones y respeta el orden manual del resto. */
+  private async placeWithTable(tx: Tx, sessionId: string, id: string) {
+    const rows = await tx.songRequest.findMany({
+      where: { sessionId, status: 'APPROVED', auto: false },
+      orderBy: [{ position: 'asc' }, { requestedAt: 'asc' }],
+    });
+    const me = rows.find((r) => r.id === id);
+    if (!me || !me.tableId) return;
+    const others = rows.filter((r) => r.id !== id);
+    let at = -1;
+    others.forEach((r, i) => { if (r.tableId === me.tableId) at = i; });
+    if (at === -1) return; // la mesa no tiene mas canciones en cola: se queda donde esta
+    const sorted = [...others.slice(0, at + 1), me, ...others.slice(at + 1)];
+    const slots = rows.map((r) => r.position).sort((x, y) => x - y);
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i].position !== slots[i]) await tx.songRequest.update({ where: { id: sorted[i].id }, data: { position: slots[i] } });
+    }
+  }
+
   private async promote(tx: Tx, sessionId: string) {
     const session = await tx.karaokeSession.findUniqueOrThrow({ where: { id: sessionId } });
     if (!session.tvStarted || session.status !== 'ACTIVE') return;
@@ -274,6 +293,7 @@ export class QueueService {
       durationSec: r.durationSec,
       status: r.status,
       position: r.position,
+      tableId: r.tableId,
       tableName: r.auto ? 'Auto-DJ' : r.table?.name,
       auto: r.auto,
       rejectionReason: r.rejectionReason,
@@ -436,7 +456,9 @@ export class QueueService {
       session: sh.session ? { open: sh.session.open } : null,
       maxPending: sh.maxPending,
       current: sh.current,
-      queue: sh.queue,
+      // Con la cola oculta el cliente solo ve lo que suena y la cancion que sigue
+      queue: sh.b.showQueue ? sh.queue : sh.queue.slice(0, 1),
+      queueHidden: !sh.b.showQueue,
       mine: t.mine,
       vote: v ? { ...v.out, mine: v.tableId === t.table.id, leftMs: Math.max(0, v.end - Date.now()) } : null,
     };
@@ -556,7 +578,12 @@ export class QueueService {
   }
 
   /** Reintenta el video actual en la TV (p.ej. se quedo congelado). */
+  /** Reinicia la cancion actual desde 0 (la TV retoma donde iba solo cuando se recarga la pagina por un fallo). */
   async reloadCurrent(businessId: string) {
+    await this.locked(businessId, async (tx) => {
+      const s = await this.activeSession(tx, businessId);
+      if (s) await tx.karaokeSession.update({ where: { id: s.id }, data: { positionSec: 0 } });
+    });
     this.rt.playback(businessId, 'playback.reload');
     return { ok: true };
   }
@@ -612,6 +639,7 @@ export class QueueService {
       });
       if (autoApprove) {
         this.events.record({ businessId: business.id, sessionId: session.id, tableId: table.id, type: 'REQUEST_APPROVED', metadata: { requestId: created.id, auto: true } });
+        await this.placeWithTable(tx, session.id, created.id);
         await this.promote(tx, session.id);
       }
       return this.view(created);
@@ -655,7 +683,22 @@ export class QueueService {
       if (r.status !== 'PENDING') throw new ConflictException('La solicitud no esta pendiente');
       await tx.songRequest.update({ where: { id }, data: { status: 'APPROVED', approvedAt: new Date() } });
       this.events.record({ businessId, sessionId: r.sessionId, tableId: r.tableId, type: 'REQUEST_APPROVED', metadata: { requestId: id } });
+      await this.placeWithTable(tx, r.sessionId, id);
       await this.promote(tx, r.sessionId);
+      return { ok: true };
+    });
+  }
+
+  /** Cambia la mesa a la que esta asociada una cancion en espera y reagrupa la cola. */
+  reassignTable(businessId: string, id: string, tableId: string) {
+    return this.locked(businessId, async (tx) => {
+      const r = await this.getOwned(tx, businessId, id);
+      if (r.auto) throw new ConflictException('Las canciones del Auto-DJ no tienen mesa');
+      if (!WAITING.includes(r.status)) throw new ConflictException('La solicitud ya no esta en espera');
+      const table = await tx.table.findFirst({ where: { id: tableId, businessId, active: true } });
+      if (!table) throw new NotFoundException('Mesa no encontrada');
+      if (r.tableId !== table.id) await tx.songRequest.update({ where: { id }, data: { tableId: table.id } });
+      if (r.status === 'APPROVED') await this.placeWithTable(tx, r.sessionId, id);
       return { ok: true };
     });
   }
@@ -716,6 +759,7 @@ export class QueueService {
         businessId, sessionId: session.id, tableId: table.id, type: 'REQUEST_CREATED',
         metadata: { requestId: created.id, videoId: input.videoId, title: created.title, channel: created.channel, source: 'dj' },
       });
+      await this.placeWithTable(tx, session.id, created.id);
       await this.promote(tx, session.id);
       return this.view(created);
     });

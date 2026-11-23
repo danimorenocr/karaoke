@@ -40,6 +40,18 @@ function beep() {
   } catch { /* sin audio */ }
 }
 
+type QGroup = { tableId: string | null; name: string; items: any[]; start: number };
+/** La cola ya viene ordenada: se parte en bloques de canciones consecutivas de la misma mesa. */
+const buildGroups = (queue: any[]): QGroup[] => {
+  const groups: QGroup[] = [];
+  queue.forEach((r, i) => {
+    const last = groups[groups.length - 1];
+    if (last && last.tableId === r.tableId) last.items.push(r);
+    else groups.push({ tableId: r.tableId, name: r.tableName, items: [r], start: i });
+  });
+  return groups;
+};
+
 type Tab = 'live' | 'tables' | 'history';
 const NAV: NavItem[] = [
   { id: 'live', label: 'En vivo', icon: 'dj' },
@@ -63,10 +75,11 @@ export default function Dj() {
   const run = useAction(toast);
   const user = auth.user();
 
-  // --- Reordenar la cola arrastrando (tactil y mouse); las flechas quedan de respaldo ---
+  // --- Reordenar la cola arrastrando (tactil y mouse) ---
   type DragData = { from: number; to: number; startY: number; scroll0: number; tops: number[]; heights: number[]; gap: number };
   const [drag, setDrag] = useState<{ id: string; from: number; to: number; offset: number; size: number } | null>(null);
   const dragData = useRef<DragData | null>(null);
+  const [gdrag, setGdrag] = useState<{ key: string; from: number; to: number; offset: number; size: number } | null>(null);
   const queueListRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -104,6 +117,7 @@ export default function Dj() {
     : path.includes('reject') ? 'Quitando la canción…'
     : path.includes('skip') ? 'Pasando a la siguiente…'
     : path.includes('reorder') ? 'Reordenando la cola…'
+    : path.endsWith('/table') ? 'Cambiando la mesa…'
     : 'Procesando…';
   const act = (method: string, path: string, body?: unknown) => {
     const label = workLabel(method, path, body);
@@ -118,20 +132,8 @@ export default function Dj() {
     });
   };
 
-  const move = (i: number, dir: -1 | 1) => {
-    const ids = s.queue.map((r: any) => r.id);
-    const j = i + dir;
-    if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    act('PATCH', '/dj/queue/reorder', { ids });
-  };
-
   /** Aplica el nuevo orden al instante y lo confirma con el backend; si falla, recarga el orden real. */
-  const applyReorder = (from: number, to: number) => {
-    if (!s) return;
-    const q = [...s.queue];
-    const [item] = q.splice(from, 1);
-    q.splice(to, 0, item);
+  const persistQueue = (q: any[]) => {
     setS((p: any) => (p ? { ...p, queue: q } : p));
     run(async () => {
       try {
@@ -143,16 +145,31 @@ export default function Dj() {
       }
     });
   };
+  const applyReorder = (from: number, to: number) => {
+    if (!s) return;
+    const q = [...s.queue];
+    const [item] = q.splice(from, 1);
+    q.splice(to, 0, item);
+    persistQueue(q);
+  };
+  /** Mueve el conjunto de canciones de una mesa como un solo bloque. */
+  const applyGroupReorder = (from: number, to: number) => {
+    if (!s) return;
+    const gs = buildGroups(s.queue);
+    const [g] = gs.splice(from, 1);
+    gs.splice(to, 0, g);
+    persistQueue(gs.flatMap((x) => x.items));
+  };
 
   /** Arrastre con puntero (dedo o mouse): mide las filas, mueve la tarjeta y desplaza las demas. */
   const onDragStart = (e: ReactPointerEvent, i: number) => {
     const list = queueListRef.current;
     if (!list || !s || s.queue.length < 2) return;
     e.preventDefault();
-    const rows = Array.from(list.children) as HTMLElement[];
+    const rows = Array.from(list.querySelectorAll('[data-qrow]')) as HTMLElement[];
     const tops = rows.map((r) => r.offsetTop);
     const heights = rows.map((r) => r.offsetHeight);
-    const gap = rows.length > 1 ? tops[1] - tops[0] - heights[0] : 8;
+    const gap = 8;
     const id = s.queue[i].id;
     const d: DragData = { from: i, to: i, startY: e.clientY, scroll0: window.scrollY, tops, heights, gap };
     dragData.current = d;
@@ -182,6 +199,43 @@ export default function Dj() {
     window.addEventListener('pointercancel', onEnd);
   };
 
+  /** Arrastre de una mesa completa (todas sus canciones juntas). */
+  const onGroupDragStart = (e: ReactPointerEvent, gi: number) => {
+    const list = queueListRef.current;
+    if (!list || !s) return;
+    const gs = buildGroups(s.queue);
+    if (gs.length < 2) return;
+    e.preventDefault();
+    const els = Array.from(list.querySelectorAll('[data-qgroup]')) as HTMLElement[];
+    const tops = els.map((r) => r.offsetTop);
+    const heights = els.map((r) => r.offsetHeight);
+    const key = `${gs[gi].tableId}-${gs[gi].items[0].id}`;
+    const d: DragData = { from: gi, to: gi, startY: e.clientY, scroll0: window.scrollY, tops, heights, gap: 8 };
+    dragData.current = d;
+    setGdrag({ key, from: gi, to: gi, offset: 0, size: heights[gi] + 8 });
+    const onMove = (ev: PointerEvent) => {
+      const offset = ev.clientY - d.startY + (window.scrollY - d.scroll0);
+      const center = d.tops[d.from] + d.heights[d.from] / 2 + offset;
+      let to = 0;
+      for (let k = 0; k < d.tops.length; k++) if (center > d.tops[k] + d.heights[k] / 2) to = k;
+      d.to = to;
+      if (ev.clientY < 90) window.scrollBy(0, -12);
+      else if (ev.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+      setGdrag({ key, from: d.from, to, offset, size: d.heights[d.from] + 8 });
+    };
+    const onEnd = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      dragData.current = null;
+      setGdrag(null);
+      if (d.to !== d.from) applyGroupReorder(d.from, d.to);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+  };
+
   // Alerta si la TV se desconecta con la sesion en marcha (se espera 8 s para ignorar parpadeos de red)
   const tvStarted = !!s?.session?.tvStarted;
   useEffect(() => {
@@ -196,6 +250,13 @@ export default function Dj() {
     const t = setInterval(() => { document.title = on ? 'TV DESCONECTADA' : 'TONO'; on = !on; }, 1000);
     return () => { clearInterval(t); document.title = 'TONO'; };
   }, [tvDown]);
+
+  /** Reinicia la cancion desde 0 en la TV y la barra. */
+  const reloadSong = () => {
+    setS((p: any) => (p ? { ...p, session: { ...p.session, positionSec: 0 } } : p)); // la barra vuelve a 0:00 al instante
+    setFetchedAt(Date.now());
+    act('POST', '/dj/playback/reload');
+  };
 
   const togglePause = () => {
     const value = !s.session.paused;
@@ -335,7 +396,7 @@ export default function Dj() {
                       </div>
                       <div className="flex gap-2">
                         <Btn onClick={togglePause}><span className="inline-flex items-center gap-2"><Icon name={session.paused ? 'play' : 'pause'} className="h-4 w-4" />{session.paused ? 'Reanudar' : 'Pausar'}</span></Btn>
-                        <Btn onClick={() => act('POST', '/dj/playback/reload')}><span className="inline-flex items-center gap-2"><Icon name="reload" className="h-4 w-4" />Recargar</span></Btn>
+                        <Btn onClick={reloadSong}><span className="inline-flex items-center gap-2"><Icon name="reload" className="h-4 w-4" />Recargar</span></Btn>
                         <Btn kind="danger" onClick={() => act('POST', '/dj/playback/skip')}><span className="inline-flex items-center gap-2"><Icon name="skip" className="h-4 w-4" />Saltar</span></Btn>
                       </div>
                     </div>
@@ -403,39 +464,81 @@ export default function Dj() {
                 ) : (
                   <div className="space-y-2">
                     <div ref={queueListRef} className="relative space-y-2">
-                      {s.queue.map((r: any, i: number) => {
-                        const d = drag && drag.id === r.id ? drag : null;
-                        let shift = 0;
-                        if (drag && !d) {
-                          if (i > drag.from && i <= drag.to) shift = -drag.size;
-                          else if (i < drag.from && i >= drag.to) shift = drag.size;
+                    {(() => {
+                      // La cola ya viene agrupada por mesa desde el backend: se parte en bloques de mesas consecutivas
+                      const groups = buildGroups(s.queue);
+                      return groups.map((g, gi) => {
+                        const gkey = `${g.tableId}-${g.items[0].id}`;
+                        const gd = gdrag && gdrag.key === gkey ? gdrag : null;
+                        let gshift = 0;
+                        if (gdrag && !gd) {
+                          if (gi > gdrag.from && gi <= gdrag.to) gshift = -gdrag.size;
+                          else if (gi < gdrag.from && gi >= gdrag.to) gshift = gdrag.size;
                         }
                         return (
-                          <div key={r.id}
-                            className={`flex items-center gap-3 rounded-xl border bg-white/[0.04] p-2.5 ${d ? 'relative z-10 select-none border-white/25 shadow-xl shadow-black/50' : 'border-white/10'}`}
-                            style={{
-                              transform: d ? `translateY(${d.offset}px)` : shift ? `translateY(${shift}px)` : undefined,
-                              transition: d ? undefined : 'transform 150ms ease',
-                              backgroundColor: d ? '#0d1117' : undefined,
-                            }}>
-                            <span title="Arrastra para reordenar" onPointerDown={(e) => onDragStart(e, i)}
-                              className="-ml-1 grid h-9 w-6 shrink-0 cursor-grab touch-none place-items-center text-slate-500 hover:text-slate-300 active:cursor-grabbing">
-                              <Icon name="grip" className="h-4 w-4" />
+                        <div key={gkey} data-qgroup
+                          className={`space-y-2 rounded-2xl border bg-white/[0.02] p-2 ${gd ? 'relative z-20 select-none border-white/25 shadow-xl shadow-black/50' : 'border-white/10'}`}
+                          style={{
+                            transform: gd ? `translateY(${gd.offset}px)` : gshift ? `translateY(${gshift}px)` : undefined,
+                            transition: gd ? undefined : 'transform 150ms ease',
+                            backgroundColor: gd ? '#0d1117' : undefined,
+                          }}>
+                          <div className="flex items-center justify-between px-1 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                            <span className="flex items-center gap-1">
+                              <span title="Arrastra para mover todas las canciones de esta mesa" onPointerDown={(e) => onGroupDragStart(e, gi)}
+                                className="-ml-1 grid h-7 w-6 shrink-0 cursor-grab touch-none place-items-center text-slate-500 hover:text-slate-300 active:cursor-grabbing">
+                                <Icon name="grip" className="h-4 w-4" />
+                              </span>
+                              {g.name}
                             </span>
-                            <div className="w-6 text-center text-sm font-bold text-slate-500">{d ? d.to + 1 : i + 1}</div>
-                            <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-medium">{r.title}</div>
-                              <div className="text-xs text-slate-400">{r.tableName}</div>
-                            </div>
-                            <div className="flex gap-1">
-                              <button title="Subir" disabled={i === 0} onClick={() => move(i, -1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="up" className="h-4 w-4" /></button>
-                              <button title="Bajar" disabled={i === s.queue.length - 1} onClick={() => move(i, 1)} className="grid h-8 w-8 place-items-center rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-25"><Icon name="downArrow" className="h-4 w-4" /></button>
-                              <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
-                            </div>
+                            <span className="rounded-full bg-white/10 px-2 py-0.5 text-slate-300">{g.items.length}</span>
                           </div>
+                          {g.items.map((r: any, k: number) => {
+                            const i = g.start + k;
+                            const d = drag && drag.id === r.id ? drag : null;
+                            let shift = 0;
+                            if (drag && !d) {
+                              if (i > drag.from && i <= drag.to) shift = -drag.size;
+                              else if (i < drag.from && i >= drag.to) shift = drag.size;
+                            }
+                            return (
+                            <div key={r.id} data-qrow
+                              className={`flex items-center gap-3 rounded-xl border bg-white/[0.04] p-2.5 ${d ? 'relative z-10 select-none border-white/25 shadow-xl shadow-black/50' : 'border-white/10'}`}
+                              style={{
+                                transform: d ? `translateY(${d.offset}px)` : shift ? `translateY(${shift}px)` : undefined,
+                                transition: d ? undefined : 'transform 150ms ease',
+                                backgroundColor: d ? '#0d1117' : undefined,
+                              }}>
+                              <span title="Arrastra para reordenar" onPointerDown={(e) => onDragStart(e, i)}
+                                className="-ml-1 grid h-9 w-6 shrink-0 cursor-grab touch-none place-items-center text-slate-500 hover:text-slate-300 active:cursor-grabbing">
+                                <Icon name="grip" className="h-4 w-4" />
+                              </span>
+                              <div className="w-6 text-center text-sm font-bold text-slate-500">{d ? d.to + 1 : i + 1}</div>
+                              <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium">{r.title}</div>
+                              </div>
+                              <div className="flex gap-1">
+                                <select
+                                  title="Cambiar la mesa que pidió esta canción"
+                                  value=""
+                                  onChange={(e) => e.target.value && act('PATCH', `/dj/requests/${r.id}/table`, { tableId: e.target.value })}
+                                  className="h-8 max-w-[7.5rem] rounded-lg border-0 bg-white/10 px-2 text-xs font-semibold text-slate-200 hover:bg-white/15"
+                                >
+                                  <option value="" className="bg-[#0b1624]">Cambiar mesa</option>
+                                  {s.tables.filter((t: any) => t.id !== r.tableId).map((t: any) => (
+                                    <option key={t.id} value={t.id} className="bg-[#0b1624]">{t.name}</option>
+                                  ))}
+                                </select>
+                                <button title="Quitar de la cola" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
+                              </div>
+                            </div>
+                            );
+                          })}
+                        </div>
                         );
-                      })}
+                      });
+                    })()}
                     </div>
                     {s.autoQueue?.length > 0 && (
                       <>

@@ -91,6 +91,8 @@ model Business {
   status             BusinessStatus @default(ACTIVE)
   maxPendingPerTable Int            @default(2)
   autoApprove        Boolean        @default(false)
+  // Si es false, el celular de los clientes solo ve la cancion que suena y la que sigue
+  showQueue          Boolean        @default(true)
   // Modo votacion: tras cada cancion los asistentes la califican (1-5) y el resultado sale en el aviso de la TV
   voteMode           Boolean        @default(false)
   voteSec            Int            @default(15)

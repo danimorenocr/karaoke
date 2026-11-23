@@ -262,7 +262,7 @@ export default function Tv() {
       if (name === 'playback.paused' && armedRef.current) { lastPaused.current = true; enginePause(); }
       if (name === 'playback.resumed' && armedRef.current && !holdRef.current) { lastPaused.current = false; enginePlay(); }
       if (name === 'queue.updated') load();
-      if (name === 'playback.reload' && stateRef.current) sync(stateRef.current, true);
+      if (name === 'playback.reload' && stateRef.current) sync({ ...stateRef.current, session: { ...stateRef.current.session, positionSec: 0 } }, true); // reiniciar: desde 0, no donde iba
     });
     claimRef.current = () => off.emit('tv.claim');
     const poll = setInterval(load, 15000); // recuperacion si se pierde algun evento
@@ -461,12 +461,12 @@ export default function Tv() {
         </div>
       )}
       <div className="absolute inset-0">
-        <div ref={hostRef} className="absolute inset-x-0 bottom-0 top-[11vh] [&>iframe]:h-full [&>iframe]:w-full" />
+        <div ref={hostRef} className="absolute inset-x-0 bottom-0 top-[8vh] [&>iframe]:h-full [&>iframe]:w-full" />
         {/* Videos de la biblioteca local del bar: se muestra solo cuando la cancion actual es local */}
         <video
           ref={videoRef}
           playsInline
-          className="absolute inset-x-0 bottom-0 top-[11vh] h-[89vh] w-full bg-black object-contain"
+          className="absolute inset-x-0 bottom-0 top-[8vh] h-[92vh] w-full bg-black object-contain"
           style={{ display: cur?.source === 'LOCAL' ? 'block' : 'none' }}
           onPlaying={() => { setBlocked(false); setPlaying(true); }}
           onEnded={() => { if (curSource.current === 'LOCAL') onSongEnded(); }}
@@ -656,23 +656,23 @@ export default function Tv() {
 
       {/* Cabecera fija: logo del local, cancion y mesa a la izquierda; siguiente y marca TONO a la derecha */}
       {cur && !transition && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-[11vh] min-h-[84px] items-center justify-between gap-6 px-[2.2vw]" style={{ fontFamily: "'Nunito', system-ui, sans-serif", background: tvBg }}>
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-[8vh] min-h-[60px] items-center justify-between gap-6 px-[2.2vw]" style={{ fontFamily: "'Nunito', system-ui, sans-serif", background: tvBg }}>
           <div className="flex min-w-0 items-center gap-5">
-            <img src={logoSrc} alt="" className="h-[7vh] max-h-16 min-h-[48px] w-auto max-w-[14vw] shrink-0 rounded-md bg-black object-contain" draggable={false} />
-            <div className="h-[6vh] w-px shrink-0 bg-white/15" />
+            <img src={logoSrc} alt="" className="h-[5.5vh] max-h-12 min-h-[36px] w-auto max-w-[14vw] shrink-0 rounded-md bg-black object-contain" draggable={false} />
+            <div className="h-[4.5vh] w-px shrink-0 bg-white/15" />
             <div className="min-w-0">
-              <div className="truncate text-3xl font-extrabold leading-tight text-white md:text-4xl">{cur.title}</div>
+              <div className="truncate text-2xl font-extrabold leading-tight text-white md:text-3xl">{cur.title}</div>
             </div>
           </div>
           <div className="flex min-w-0 shrink-0 items-center gap-5">
             {!cur.auto && cur.tableName && (
-              <span className="shrink-0 rounded-full bg-[#a9c0ff] px-7 py-2 text-3xl font-extrabold text-[#0b1030] md:text-4xl">{cur.tableName}</span>
+              <span className="shrink-0 rounded-full bg-[#a9c0ff] px-5 py-1 text-2xl font-extrabold text-[#0b1030] md:text-3xl">{cur.tableName}</span>
             )}
-            <img src="/favicon.png" alt="TONO" className="h-[7vh] max-h-14 min-h-[40px] w-auto rounded-xl opacity-90" draggable={false} />
+            <img src="/favicon.png" alt="TONO" className="h-[5.5vh] max-h-11 min-h-[32px] w-auto rounded-xl opacity-90" draggable={false} />
           </div>
         </div>
       )}
-      <div className="pointer-events-none absolute right-4 top-24 z-30 flex gap-2">
+      <div className="pointer-events-none absolute right-4 top-16 z-30 flex gap-2">
         {!online && <div className="rounded bg-red-700 px-3 py-1 text-sm">Sin conexion</div>}
         {state?.session?.paused && <div className="rounded bg-amber-600 px-3 py-1 text-sm">En pausa</div>}
       </div>
