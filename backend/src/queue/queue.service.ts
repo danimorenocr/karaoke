@@ -817,6 +817,72 @@ export class QueueService {
     return { ok: true, willFail: true };
   }
 
+  /** Versiones de YouTube ya intentadas para una solicitud (en memoria): no se vuelven a ofrecer como alternativa. */
+  private tried = new Map<string, Set<string>>();
+
+  /**
+   * Otras subidas del mismo tema para una cancion marcada "va a fallar": la misma busqueda y el mismo modo
+   * del bar (solo pasa el filtro de incrustables de la capa 1), sin la bloqueada ni las ya intentadas.
+   * Si YouTube no responde o no hay cuota, devuelve lista vacia (el DJ reintenta o quita la cancion).
+   */
+  async alternatives(businessId: string, requestId: string) {
+    const r = await this.prisma.songRequest.findFirst({
+      where: { id: requestId, businessId },
+      select: { id: true, status: true, videoId: true, title: true, source: true },
+    });
+    if (!r) throw new NotFoundException('Solicitud no encontrada');
+    if (r.source === 'LOCAL' || !['PENDING', 'APPROVED'].includes(r.status)) return { items: [] };
+    const b = await this.prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { searchMode: true } });
+    const mode = (await this.plans.has(businessId, 'searchAny')) ? b.searchMode : 'KARAOKE';
+    const skip = new Set([r.videoId, ...(this.tried.get(r.id) ?? [])]);
+    let found: Awaited<ReturnType<YoutubeService['searchSongs']>> = [];
+    try { found = await this.yt.searchSongs(r.title, mode); } catch { found = []; }
+    const items = found
+      .filter((v) => !skip.has(v.videoId))
+      .slice(0, 3)
+      .map((v) => ({ videoId: v.videoId, title: v.title, channel: v.channelTitle, thumbnail: v.thumbnail, durationSec: v.durationSec }));
+    return { items };
+  }
+
+  /**
+   * Cambia la cancion por otra version de YouTube elegida por el DJ. La nueva se valida por la capa 1
+   * (incrustable, sin bloqueo conocido) y la solicitud conserva mesa, estado y puesto en la cola;
+   * la prueba en vivo del panel la vuelve a comprobar sola (needsProbe) y si tambien falla,
+   * reaparece la marca y las alternativas ya no incluyen las intentadas.
+   */
+  async swap(businessId: string, requestId: string, videoId: string) {
+    const r = await this.prisma.songRequest.findFirst({
+      where: { id: requestId, businessId },
+      select: { id: true, status: true, videoId: true, source: true },
+    });
+    if (!r) throw new NotFoundException('Solicitud no encontrada');
+    if (r.source === 'LOCAL' || !['PENDING', 'APPROVED'].includes(r.status)) return { ok: true, ignored: true };
+    if (!/^[\w-]{11}$/.test(videoId) || videoId === r.videoId || (this.tried.get(r.id)?.has(videoId) ?? false)) {
+      throw new BadRequestException('Esa version no vale para esta cancion');
+    }
+    // Un ID/link no gasta cuota de busqueda: valida bloqueo conocido y trae titulo y duracion reales
+    const [v] = await this.yt.searchSongs(videoId, 'ANY');
+    if (!v) throw new BadRequestException('Esa version no se puede reproducir en la TV');
+    const tried = this.tried.get(r.id) ?? new Set<string>();
+    tried.add(r.videoId);
+    this.tried.set(r.id, tried);
+    if (this.tried.size > 1000) this.tried.delete(this.tried.keys().next().value!);
+    await this.prisma.songRequest.update({
+      where: { id: r.id },
+      data: {
+        videoId: v.videoId,
+        title: v.title.slice(0, 200),
+        channel: (v.channelTitle ?? '').slice(0, 120),
+        thumbnail: (v.thumbnail ?? '').slice(0, 500),
+        durationSec: v.durationSec ?? null,
+      },
+    });
+    this.probed.delete(r.id); // vuelve a necesitar la prueba en vivo
+    this.willFail.delete(r.id);
+    this.rt.queueUpdated(businessId);
+    return { ok: true, title: v.title };
+  }
+
   /** Vuelve a poner al frente una cancion fallida/saltada/completada. */
   retry(businessId: string, id: string) {
     return this.locked(businessId, async (tx) => {

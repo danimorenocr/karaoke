@@ -48,6 +48,14 @@ class ProbeDto {
   @IsIn(['ok', 'error', 'timeout']) outcome: 'ok' | 'error' | 'timeout';
   @IsOptional() @IsInt() code?: number;
 }
+class AlternativesDto {
+  @IsString() requestId: string;
+}
+class SwapDto {
+  @IsString() requestId: string;
+  /** Nuevo video de YouTube (otra subida del mismo tema). */
+  @IsString() videoId: string;
+}
 
 import { PlansService } from '../plans/plans.service';
 import { AgentService } from '../agent/agent.module';
@@ -76,6 +84,10 @@ class DjController {
   @Get('queue') queue(@CurrentUser() u: AuthUser) { return this.q.djState(biz(u)); }
   /** El panel prueba cada cancion en un reproductor oculto y avisa el resultado (antes de que llegue a la TV). */
   @Post('probe') probe(@CurrentUser() u: AuthUser, @Body() b: ProbeDto) { return this.q.probeResult(biz(u), b.requestId, b.outcome, b.code); }
+  /** Otras subidas del mismo tema para una cancion marcada "va a fallar". */
+  @Post('alternatives') alternatives(@CurrentUser() u: AuthUser, @Body() b: AlternativesDto) { return this.q.alternatives(biz(u), b.requestId); }
+  /** Cambia la cancion por la version elegida (conserva mesa, estado y puesto en la cola). */
+  @Post('swap') swap(@CurrentUser() u: AuthUser, @Body() b: SwapDto) { return this.q.swap(biz(u), b.requestId, b.videoId); }
   @Post('session/start') start(@CurrentUser() u: AuthUser) { return this.q.startSession(biz(u)); }
   @Post('session/stop') stop(@CurrentUser() u: AuthUser) { return this.q.stopSession(biz(u)); }
   @Patch('session/requests-open') open(@CurrentUser() u: AuthUser, @Body() b: FlagDto) { return this.q.setRequestsOpen(biz(u), b.value); }

@@ -79,6 +79,8 @@ export default function Dj() {
   // --- Reordenar la cola arrastrando (tactil y mouse) ---
   type DragData = { from: number; to: number; startY: number; scroll0: number; tops: number[]; heights: number[]; gap: number };
   const [drag, setDrag] = useState<{ id: string; from: number; to: number; offset: number; size: number } | null>(null);
+  // Alternativas de YouTube para canciones marcadas "va a fallar", por solicitud
+  const [alts, setAlts] = useState<Record<string, { loading?: boolean; items?: any[]; none?: boolean }>>({});
   const dragData = useRef<DragData | null>(null);
   const [gdrag, setGdrag] = useState<{ key: string; from: number; to: number; offset: number; size: number } | null>(null);
   const queueListRef = useRef<HTMLDivElement | null>(null);
@@ -119,6 +121,7 @@ export default function Dj() {
     : path.includes('skip') ? 'Pasando a la siguiente…'
     : path.includes('reorder') ? 'Reordenando la cola…'
     : path.endsWith('/table') ? 'Cambiando la mesa…'
+    : path.includes('swap') ? 'Cambiando la versión…'
     : 'Procesando…';
   const act = (method: string, path: string, body?: unknown) => {
     const label = workLabel(method, path, body);
@@ -275,6 +278,44 @@ export default function Dj() {
   const reportProbe = (id: string, outcome: ProbeOutcome, code?: number) => {
     api('POST', '/dj/probe', { requestId: id, outcome, code }).then(load).catch(() => {});
   };
+  /** Busca otras subidas del mismo tema para una cancion marcada "va a fallar". */
+  const findAlts = (id: string) => {
+    setAlts((p) => ({ ...p, [id]: { loading: true } }));
+    api('POST', '/dj/alternatives', { requestId: id })
+      .then((r) => setAlts((p) => ({ ...p, [id]: { items: r?.items ?? [], none: !(r?.items ?? []).length } })))
+      .catch(() => setAlts((p) => ({ ...p, [id]: { none: true } })));
+  };
+  /** Cambia la cancion por la version elegida; la prueba en vivo la vuelve a comprobar sola. */
+  const swapVersion = (id: string, videoId: string) => {
+    setAlts((p) => { const n = { ...p }; delete n[id]; return n; });
+    act('POST', '/dj/swap', { requestId: id, videoId });
+  };
+  /** Lista de alternativas desplegada bajo una cancion marcada. */
+  const altBlock = (r: any) => {
+    const a = alts[r.id];
+    if (!a) return null;
+    if (a.loading) return <div className="mt-1.5 text-xs text-slate-400">Buscando otra versión…</div>;
+    if (a.none) return <div className="mt-1.5 text-xs text-slate-500">No encontré otra versión que sirva.</div>;
+    return (
+      <div className="mt-1.5 space-y-1">
+        {(a.items ?? []).map((v: any) => (
+          <div key={v.videoId} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-1.5">
+            <Thumb src={v.thumbnail} className="h-9 w-16 !rounded-md" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium">{v.title}</div>
+              <div className="truncate text-[11px] text-slate-500">{v.channel}{v.durationSec ? ` · ${fmtDuration(v.durationSec)}` : ''}</div>
+            </div>
+            <button onClick={() => swapVersion(r.id, v.videoId)} className="shrink-0 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/30">Usar esta</button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+  /** Boton para desplegar alternativas junto a la marca "Va a fallar". */
+  const altBtn = (r: any) =>
+    r.willFail && !alts[r.id] ? (
+      <button onClick={() => findAlts(r.id)} className="ml-1.5 rounded bg-white/10 px-1.5 py-0.5 font-semibold text-slate-100 hover:bg-white/15">Buscar otra versión</button>
+    ) : null;
   const [title, subtitle] = HERO[tab];
   const links: [string, string, 'tv' | 'home'][] = [['/tv', 'Pantalla TV', 'tv']];
   if (user?.role === 'ADMIN') links.push(['/admin', 'Panel admin', 'home']);
@@ -460,7 +501,9 @@ export default function Dj() {
                               {r.durationSec ? <span className="ml-2">{fmtDuration(r.durationSec)}</span> : null}
                               {r.needsProbe && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-300">Comprobando…</span>}
                               {r.willFail && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
+                              {altBtn(r)}
                             </div>
+                            {altBlock(r)}
                           </div>
                           <Btn kind="ok" onClick={() => act('PATCH', `/dj/requests/${r.id}/approve`)}>Aprobar</Btn>
                           <Btn kind="danger" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})}>Rechazar</Btn>
@@ -531,7 +574,8 @@ export default function Dj() {
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium">{r.title}</div>
                                 {r.needsProbe && <div className="text-xs text-amber-300">Comprobando…</div>}
-                                {r.willFail && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea</div>}
+                                {r.willFail && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea{altBtn(r)}</div>}
+                                {altBlock(r)}
                               </div>
                               <div className="flex gap-1">
                                 <select
@@ -565,7 +609,8 @@ export default function Dj() {
                             <Thumb src={r.thumbnail} className="h-11 w-[4.5rem] !rounded-lg" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{r.title}</div>
-                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}{r.needsProbe && <> · <span className="text-amber-300">Comprobando…</span></>}{r.willFail && <> · <span className="font-semibold text-red-300">Va a fallar</span></>}</div>
+                              <div className="text-xs text-slate-500">Auto-DJ{r.channel ? ` · ${r.channel}` : ''}{r.needsProbe && <> · <span className="text-amber-300">Comprobando…</span></>}{r.willFail && <> · <span className="font-semibold text-red-300">Va a fallar</span></>}{altBtn(r)}</div>
+                              {altBlock(r)}
                             </div>
                             <button title="Quitar" onClick={() => act('PATCH', `/dj/requests/${r.id}/reject`, {})} className="grid h-8 w-8 place-items-center rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25"><Icon name="x" className="h-4 w-4" /></button>
                           </div>
