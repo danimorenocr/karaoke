@@ -791,12 +791,13 @@ export class QueueService {
   private willFail = new Set<string>();
 
   /** Marca en las listas del panel cuales solicitudes de YouTube aun no pasan la prueba en vivo y cuales ya se sabe que fallaran. */
-  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean; willFail: boolean; downloading: boolean })[] {
-    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id), willFail: this.willFail.has(r.id), downloading: this.downloading.has(r.id) }));
+  private withProbe<T extends { id: string; source: string }>(rows: T[]): (T & { needsProbe: boolean; willFail: boolean; downloading: boolean; downloadPct: number })[] {
+    return rows.map((r) => ({ ...r, needsProbe: r.source === 'YOUTUBE' && !this.probed.has(r.id), willFail: this.willFail.has(r.id), downloading: this.downloading.has(r.id), downloadPct: this.dlPct.get(r.id) ?? 0 }));
   }
 
   /** Solicitudes que el agente local esta bajando de YouTube (requestId -> businessId); no se reproducen hasta que terminan. */
   private downloading = new Map<string, string>();
+  private dlPct = new Map<string, number>(); // avance (0-100) de cada descarga en curso
   /** Solicitudes cuya descarga ya fallo una vez: no se vuelve a intentar (evita bucles). */
   private dlFailed = new Set<string>();
 
@@ -814,15 +815,24 @@ export class QueueService {
     this.downloading.set(r.id, businessId);
     // Si el agente no responde en 10 min se da por perdida y se sigue como antes
     setTimeout(() => {
-      if (this.downloading.delete(r.id)) { this.dlFailed.add(r.id); this.rt.queueUpdated(businessId); }
+      if (this.downloading.delete(r.id)) { this.dlPct.delete(r.id); this.dlFailed.add(r.id); this.rt.queueUpdated(businessId); }
     }, 10 * 60_000).unref?.();
     this.log.log(`Descarga pedida al agente: ${r.videoId}`);
     return true;
   }
 
-  private async onAgentDownload(businessId: string, kind: 'done' | 'failed', body: { requestId: string; id?: string; reason?: string }) {
+  private async onAgentDownload(businessId: string, kind: 'done' | 'failed' | 'progress', body: { requestId: string; id?: string; reason?: string; percent?: number }) {
     if (this.downloading.get(body.requestId) !== businessId) return; // ya no se esperaba (cambiada, quitada o vencida)
+    if (kind === 'progress') {
+      const pct = Math.max(0, Math.min(100, Math.round(Number(body.percent) || 0)));
+      const prev = this.dlPct.get(body.requestId);
+      this.dlPct.set(body.requestId, pct);
+      if (prev === undefined || Math.floor(pct / 25) !== Math.floor(prev / 25)) this.log.log(`Descarga ${body.requestId.slice(-6)}: ${pct}%`);
+      this.rt.downloadProgress(businessId, body.requestId, pct);
+      return;
+    }
     this.downloading.delete(body.requestId);
+    this.dlPct.delete(body.requestId);
     if (kind === 'failed') {
       this.dlFailed.add(body.requestId);
       this.log.warn(`El agente no pudo bajar el video: ${String(body.reason ?? '').slice(0, 200)}`);
@@ -965,7 +975,7 @@ export class QueueService {
         durationSec: v.durationSec ?? null,
       },
     });
-    this.downloading.delete(r.id); // eligio otra version: ya no se espera la descarga
+    this.downloading.delete(r.id); this.dlPct.delete(r.id); // eligio otra version: ya no se espera la descarga
     this.probed.delete(r.id); // vuelve a necesitar la prueba en vivo
     this.willFail.delete(r.id);
     this.rt.queueUpdated(businessId);

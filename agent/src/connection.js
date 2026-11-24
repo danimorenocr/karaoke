@@ -12,11 +12,18 @@ export function createAgent(getConfig) {
   let timer = null;
 
   // Videos que YouTube no deja incrustar: el servidor pide bajarlos y quedan en la carpeta como cualquier otro video
+  let lastPct = 0;
   const downloader = createDownloader({
     getFolder: () => getConfig().folder,
     onDone: (requestId, file) => {
       sync(); // el indice (con el video nuevo) sale antes que el aviso
       socket?.emit('agent.download.done', { requestId, id: idFor(path.basename(file)) });
+    },
+    onProgress: (requestId, percent) => {
+      const now = Date.now();
+      if (percent > 0 && percent < 100 && now - lastPct < 700) return; // ~1 aviso por segundo es suficiente
+      lastPct = now;
+      socket?.emit('agent.download.progress', { requestId, percent });
     },
     onFail: (requestId, reason) => { socket?.emit('agent.download.failed', { requestId, reason }); },
   });
@@ -75,6 +82,7 @@ export function createAgent(getConfig) {
   return {
     state: () => ({ downloads: downloader.state(), count: st.count, songs: st.songs, skipped: st.skipped, connected: st.connected, error: st.error, lastSync: st.lastSync }),
     file: (id) => st.files.get(id),
+    deps: () => downloader.checkDeps(),
     /** Se llama al cambiar la configuracion (carpeta, servidor o token). */
     apply() { connect(); watch(); sync(); },
   };

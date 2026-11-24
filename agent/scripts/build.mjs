@@ -78,7 +78,16 @@ if (withYtdlp) {
     fs.rmSync(out, { recursive: true, force: true });
     fs.rmSync(zip, { force: true });
   }
-  for (const f of ['yt-dlp.exe', 'ffmpeg.exe']) { fs.copyFileSync(path.join(vendor, f), path.join(stage, f)); extra.push(f); }
+  // Deno: runtime de JavaScript que yt-dlp necesita para YouTube
+  const deno = path.join(vendor, 'deno.exe');
+  if (!fs.existsSync(deno)) {
+    const dz = path.join(vendor, 'deno.zip');
+    await get('https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip', dz);
+    execFileSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${dz}' -DestinationPath '${vendor}' -Force`], { stdio: 'inherit' });
+    fs.rmSync(dz, { force: true });
+    if (!fs.existsSync(deno)) throw new Error('No se encontro deno.exe dentro del zip');
+  }
+  for (const f of ['yt-dlp.exe', 'ffmpeg.exe', 'deno.exe']) { fs.copyFileSync(path.join(vendor, f), path.join(stage, f)); extra.push(f); }
 } else {
   console.log('Sin yt-dlp/ffmpeg (--no-ytdlp): el instalador no podra bajar videos bloqueados');
 }

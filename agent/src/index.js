@@ -62,6 +62,7 @@ const server = http.createServer(async (req, res) => {
   if (v && (req.method === 'GET' || req.method === 'HEAD')) return serveVideo(req, res, v[1]);
   if (url.pathname === '/ping') return send(res, 200, { ok: true, agent: 'karaoke', songs: agent.state().count });
 
+  if (url.pathname === '/api/deps' && req.method === 'GET') return send(res, 200, await agent.deps());
   if (url.pathname === '/' && req.method === 'GET') return send(res, 200, ui, 'text/html');
   if (url.pathname === '/api/state' && req.method === 'GET') {
     return send(res, 200, { ...agent.state(), config: { ...cfg, token: cfg.token ? '••••' + cfg.token.slice(-4) : '' }, configPath });

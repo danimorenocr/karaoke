@@ -116,6 +116,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     return { ok: true };
   }
 
+  @SubscribeMessage('agent.download.progress')
+  async agentDownloadProgress(@ConnectedSocket() socket: Socket, @MessageBody() body: { requestId?: unknown; percent?: unknown }) {
+    const biz = socket.data.agentBiz as string | undefined;
+    if (biz && typeof body?.requestId === 'string' && typeof body?.percent === 'number') this.agents.downloadEvent(biz, 'progress', body);
+    return { ok: true };
+  }
+
   @SubscribeMessage('agent.download.failed')
   async agentDownloadFailed(@ConnectedSocket() socket: Socket, @MessageBody() body: { requestId?: unknown; reason?: unknown }) {
     await socket.data.ready;
@@ -172,6 +179,10 @@ export class RealtimeService {
   queueUpdated(businessId: string) {
     this.listeners.forEach((fn) => fn(businessId));
     this.gw.emit(businessId, 'queue.updated');
+  }
+  /** Avance (0-100) de una descarga del agente: solo el panel del DJ lo necesita, sin recargar nada. */
+  downloadProgress(businessId: string, requestId: string, percent: number) {
+    this.gw.emit(businessId, 'download.progress', { requestId, percent });
   }
   /** Control de reproduccion para la TV (pausa/reanudar/recargar el video actual). */
   playback(businessId: string, event: 'playback.paused' | 'playback.resumed' | 'playback.reload') {

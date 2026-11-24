@@ -68,6 +68,7 @@ const HERO: Record<Tab, [string, string]> = {
 export default function Dj() {
   const [tab, setTab] = useState<Tab>('live');
   const [s, setS] = useState<any>(null);
+  const [dlPct, setDlPct] = useState<Record<string, number>>({}); // avance en vivo de las descargas (requestId -> %)
   const [fetchedAt, setFetchedAt] = useState(0); // momento de la ultima recarga, para interpolar el progreso
   const [online, setOnline] = useState(true);
   const [tvConnected, setTvConnected] = useState(false);
@@ -103,6 +104,7 @@ export default function Dj() {
       if (name === 'queue.updated' || name === 'connect') { setOnline(true); load(); }
       if (name === 'disconnect') setOnline(false);
       if (name === 'tv.status') setTvConnected(payload.connected);
+      if (name === 'download.progress' && payload?.requestId) setDlPct((p) => ({ ...p, [payload.requestId]: payload.percent }));
     });
     const poll = setInterval(() => { if (!document.hidden) load(); }, 20000); // respaldo; con la pestana oculta no consulta
     const onVisible = () => { if (!document.hidden) load(); };
@@ -262,6 +264,14 @@ export default function Dj() {
     act('POST', '/dj/playback/reload');
   };
 
+  // Respaldo del avance en vivo: mientras alguna cancion se descarga, el estado se vuelve a pedir cada 2 s
+  const anyDownloading = !!s && [...(s.queue ?? []), ...(s.pending ?? [])].some((r: any) => r.downloading);
+  useEffect(() => {
+    if (!anyDownloading) return;
+    const t = setInterval(() => { if (!document.hidden) load(); }, 2000);
+    return () => clearInterval(t);
+  }, [anyDownloading, load]);
+
   const togglePause = () => {
     const value = !s.session.paused;
     setS((p: any) => ({ ...p, session: { ...p.session, paused: value } }));
@@ -289,6 +299,18 @@ export default function Dj() {
   const swapVersion = (id: string, videoId: string) => {
     setAlts((p) => { const n = { ...p }; delete n[id]; return n; });
     act('POST', '/dj/swap', { requestId: id, videoId });
+  };
+  /** Barra real de descarga (el agente del bar reporta el % de yt-dlp). */
+  const dlBar = (r: any) => {
+    const pct = Math.max(0, Math.min(100, Math.round(dlPct[r.id] ?? r.downloadPct ?? 0)));
+    return (
+      <div className="mt-1.5" role="progressbar" aria-label="Descarga" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-sky-400 transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="mt-0.5 text-[11px] tabular-nums text-sky-300">{pct > 0 ? `Descargando ${pct}%` : 'Iniciando descarga…'}</div>
+      </div>
+    );
   };
   /** Lista de alternativas desplegada bajo una cancion marcada. */
   const altBlock = (r: any) => {
@@ -507,7 +529,7 @@ export default function Dj() {
                               <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-slate-200">{r.tableName}</span>
                               {r.durationSec ? <span className="ml-2">{fmtDuration(r.durationSec)}</span> : null}
                               {r.needsProbe && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-300">Comprobando…</span>}
-                              {r.downloading && <span className="ml-2 rounded bg-sky-500/20 px-1.5 py-0.5 font-medium text-sky-300" title="YouTube no la deja reproducir; el agente del bar la está bajando">Descargando…</span>}
+                              {r.downloading && <span className="ml-2 rounded bg-sky-500/20 px-1.5 py-0.5 font-medium text-sky-300" title="YouTube no la deja reproducir; el agente del bar la está bajando">Descargando {Math.round(dlPct[r.id] ?? r.downloadPct ?? 0)}%</span>}
                               {r.willFail && !r.downloading && <span className="ml-2 rounded bg-red-500/20 px-1.5 py-0.5 font-medium text-red-300" title="YouTube no deja reproducir este video aquí; si se pone en la TV, va a fallar">Va a fallar</span>}
                               {altBtn(r)}
                             </div>
@@ -583,6 +605,7 @@ export default function Dj() {
                                 <div className="truncate text-sm font-medium">{r.title}</div>
                                 {r.needsProbe && <div className="text-xs text-amber-300">Comprobando…</div>}
                                 {r.downloading && <div className="text-xs font-semibold text-sky-300">Descargando en el bar… sonará cuando termine</div>}
+                                {r.downloading && dlBar(r)}
                                 {r.willFail && !r.downloading && <div className="text-xs font-semibold text-red-300">Va a fallar · YouTube la bloquea{altBtn(r)}</div>}
                                 {altBlock(r)}
                               </div>

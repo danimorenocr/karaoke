@@ -26,10 +26,10 @@ export class AgentService {
 
   /** Lo fija el gateway: envia un mensaje al socket del agente. */
   sender?: (socketId: string, event: string, payload: unknown) => void;
-  private dlHandlers: ((businessId: string, kind: 'done' | 'failed', body: any) => void)[] = [];
+  private dlHandlers: ((businessId: string, kind: 'done' | 'failed' | 'progress', body: any) => void)[] = [];
   /** Quien quiera enterarse de las descargas del agente (terminadas o fallidas). */
-  onDownload(fn: (businessId: string, kind: 'done' | 'failed', body: any) => void) { this.dlHandlers.push(fn); }
-  downloadEvent(businessId: string, kind: 'done' | 'failed', body: any) { this.dlHandlers.forEach((fn) => fn(businessId, kind, body)); }
+  onDownload(fn: (businessId: string, kind: 'done' | 'failed' | 'progress', body: any) => void) { this.dlHandlers.push(fn); }
+  downloadEvent(businessId: string, kind: 'done' | 'failed' | 'progress', body: any) { this.dlHandlers.forEach((fn) => fn(businessId, kind, body)); }
   /** Pide al agente del bar que baje un video de YouTube a su carpeta. false si no hay agente conectado. */
   requestDownload(businessId: string, payload: { requestId: string; videoId: string }) {
     const sid = this.socketOf(businessId);

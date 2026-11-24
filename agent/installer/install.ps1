@@ -26,7 +26,7 @@ try {
   # yt-dlp + ffmpeg (bajan los videos que YouTube no deja incrustar). yt-dlp se actualiza solo: no se pisa uno mas nuevo.
   $bin = Join-Path $dir 'bin'
   New-Item -ItemType Directory -Force -Path $bin | Out-Null
-  foreach ($f in 'yt-dlp.exe', 'ffmpeg.exe') {
+  foreach ($f in 'yt-dlp.exe', 'ffmpeg.exe', 'deno.exe') {
     $src = Join-Path $here $f
     $dst = Join-Path $bin $f
     if (-not (Test-Path $src)) { continue }

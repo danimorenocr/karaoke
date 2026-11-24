@@ -73,7 +73,7 @@ export function connectSocket(
     reconnectionDelayMax: 5000,
     timeout: 10000,
   });
-  ['queue.updated', 'playback.paused', 'playback.resumed', 'playback.reload', 'tv.status', 'tv.replaced'].forEach((e) =>
+  ['queue.updated', 'playback.paused', 'playback.resumed', 'playback.reload', 'tv.status', 'tv.replaced', 'download.progress'].forEach((e) =>
     socket.on(e, (p) => onEvent(e, p)),
   );
   socket.on('connect', () => onEvent('connect'));
