@@ -808,6 +808,8 @@ export class QueueService {
     if (r.source === 'LOCAL' || this.dlFailed.has(r.id) || !/^[\w-]{11}$/.test(r.videoId)) return false;
     if (this.downloading.has(r.id)) return true;
     if (!(await this.plans.has(businessId, 'localLibrary'))) return false;
+    const biz = await this.prisma.business.findUnique({ where: { id: businessId }, select: { autoDownload: true } });
+    if (!biz?.autoDownload) return false; // el bar la apago en Configuracion
     if (!this.agents.requestDownload(businessId, { requestId: r.id, videoId: r.videoId })) return false;
     this.downloading.set(r.id, businessId);
     // Si el agente no responde en 10 min se da por perdida y se sigue como antes

@@ -683,11 +683,11 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
   const [logoDirty, setLogoDirty] = useState(false);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, showQueue: biz.showQueue !== false, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, voteScope: (biz.voteScope ?? 'SONG') as 'SONG' | 'TABLE', searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
+  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, showQueue: biz.showQueue !== false, autoDownload: biz.autoDownload !== false, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, voteScope: (biz.voteScope ?? 'SONG') as 'SONG' | 'TABLE', searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, showQueue: f.showQueue, maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteScope: f.voteScope, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, showQueue: f.showQueue, ...(has('localLibrary') ? { autoDownload: f.autoDownload } : {}), maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteScope: f.voteScope, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
@@ -756,6 +756,14 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
             label="Mostrar la cola en el celular de los clientes"
             hint="Si lo desactivas, el celular solo muestra la canción que está sonando y la que sigue."
           />
+          {has('localLibrary') && (
+            <Toggle
+              checked={f.autoDownload}
+              onChange={(v) => setF({ ...f, autoDownload: v })}
+              label="Descargar automáticamente las canciones que YouTube bloquea"
+              hint="Solo funciona con el agente del bar conectado. Si no está conectado, o si lo desactivas, esas canciones se saltan como antes."
+            />
+          )}
         </div>
       </Card>
       <Card title="Modo competencia" className="lg:col-span-2">
