@@ -1,0 +1,129 @@
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { QueueModule } from '../queue/queue.module';
+import { QueueService } from '../queue/queue.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { YoutubeModule } from '../youtube/youtube.module';
+import { YoutubeService } from '../youtube/youtube.service';
+import { EventsService } from '../stats/events.service';
+import { PlansService } from '../plans/plans.service';
+import { AgentService } from '../agent/agent.module';
+
+class CreateRequestDto {
+  @Matches(/^[\w-]{11}$/, { message: 'videoId invalido' }) videoId: string;
+  @IsString() @MaxLength(200) title: string;
+  @IsOptional() @IsString() @MaxLength(120) channel?: string;
+  @IsOptional() @IsString() @MaxLength(500) thumbnail?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(36000) durationSec?: number;
+  @IsOptional() @IsIn(['LOCAL', 'YOUTUBE']) source?: 'LOCAL' | 'YOUTUBE';
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
+}
+
+class ScanDto {
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
+}
+class VoteDto {
+  @IsString() @MaxLength(40) requestId: string;
+  @IsInt() @Min(1) @Max(5) rating: number;
+  @IsString() @MinLength(6) @MaxLength(40) clientId: string;
+}
+class FeedbackDto {
+  @IsInt() @Min(1) @Max(5) rating: number;
+  @IsOptional() @IsString() @MaxLength(300) comment?: string;
+  @IsOptional() @IsString() @MaxLength(40) clientId?: string;
+}
+
+/** Sin login: la mesa se identifica por el token del QR. */
+@Controller('public/:token')
+class PublicController {
+  constructor(private q: QueueService, private prisma: PrismaService, private yt: YoutubeService, private events: EventsService, private plans: PlansService, private agents: AgentService) {}
+
+  @Get('state')
+  @Throttle({ default: { limit: 3000, ttl: 60_000 } })
+  state(@Param('token') token: string, @Query('img') img?: string) {
+    return this.q.publicState(token, img === 'url');
+  }
+
+  /** Logo del local como imagen (no dentro del JSON): el navegador lo guarda hasta que cambie la version (?v=). */
+  @Get('logo')
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  async logo(@Param('token') token: string, @Query('v') v: string | undefined, @Req() req: Request, @Res() res: Response) {
+    const l = await this.q.publicLogo(token);
+    const etag = `"logo-${l.v}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', v === String(l.v) ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (req.headers['if-none-match'] === etag) return res.status(304).end();
+    res.setHeader('Content-Type', l.mime);
+    res.send(l.buf);
+  }
+
+  /** Busqueda segun la configuracion del bar (solo karaoke o cualquier musica). */
+  @Get('search')
+  @Throttle({ default: { limit: 90, ttl: 60_000 } }) // varias mesas comparten la IP del wifi del bar
+  async search(@Param('token') token: string, @Query('q') q = '', @Query('mode') mode?: string) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token }, include: { business: { select: { searchMode: true, searchProvider: true, status: true } } } });
+    if (!table || !table.active || table.business.status !== 'ACTIVE') throw new NotFoundException('Este codigo QR no es valido');
+    this.events.record({ businessId: table.businessId, tableId: table.id, type: 'SEARCH_PERFORMED', metadata: { q: q.trim().toLowerCase().slice(0, 60) } });
+    // El comensal elige karaoke o normal solo si el local esta en "cualquier musica" (y el plan lo incluye);
+    // en "solo karaoke" la mesa no puede forzar una busqueda normal
+    const canAny = await this.plans.has(table.businessId, 'searchAny');
+    const wanted = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
+    const m = canAny && table.business.searchMode === 'ANY' ? wanted : 'KARAOKE';
+    // Los comensales buscan por nombre: no se aceptan links pegados (el DJ si puede, por su propio buscador)
+    if (/https?:\/\/|youtu\.?be|youtube\.com/i.test(q)) throw new BadRequestException('Escribe el nombre de la canción o del artista');
+    // Biblioteca del bar primero; si no hay coincidencias (o el agente no esta), YouTube
+    const local = await this.agents.search(table.businessId, q);
+    if (local.length) return local;
+    return this.yt.searchSongs(q, m, table.business.searchProvider);
+  }
+
+  /** La pagina de la mesa avisa una vez por visita (no en cada refresco) para medir escaneos del QR. */
+  @Post('scan')
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  async scan(@Param('token') token: string, @Body() dto: ScanDto) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token } });
+    if (!table || !table.active) throw new NotFoundException('Este codigo QR no es valido');
+    const session = await this.prisma.karaokeSession.findFirst({ where: { businessId: table.businessId, status: 'ACTIVE' }, select: { id: true } });
+    this.events.record({ businessId: table.businessId, sessionId: session?.id, tableId: table.id, type: 'QR_SCANNED', metadata: { clientId: dto.clientId } });
+    return { ok: true };
+  }
+
+  /** Valoracion opcional y breve (1 a 5). */
+  @Post('feedback')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async feedback(@Param('token') token: string, @Body() dto: FeedbackDto) {
+    const table = await this.prisma.table.findUnique({ where: { qrToken: token } });
+    if (!table || !table.active) throw new NotFoundException('Este codigo QR no es valido');
+    const session = await this.prisma.karaokeSession.findFirst({ where: { businessId: table.businessId, status: 'ACTIVE' }, select: { id: true } });
+    this.events.record({
+      businessId: table.businessId, sessionId: session?.id, tableId: table.id, type: 'FEEDBACK_SUBMITTED',
+      metadata: { rating: dto.rating, comment: dto.comment?.trim() || undefined, clientId: dto.clientId },
+    });
+    return { ok: true };
+  }
+
+  /** Voto (1-5) a la cancion que acaba de terminar (modo votacion). */
+  @Post('vote')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  vote(@Param('token') token: string, @Body() dto: VoteDto) {
+    return this.q.castVote(token, dto.requestId, dto.rating, dto.clientId);
+  }
+
+  @Post('requests')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  create(@Param('token') token: string, @Body() dto: CreateRequestDto) {
+    return this.q.createRequest(token, dto);
+  }
+
+  @Post('requests/:id/cancel')
+  cancel(@Param('token') token: string, @Param('id') id: string) {
+    return this.q.cancelOwn(token, id);
+  }
+}
+
+@Module({ imports: [QueueModule, YoutubeModule], controllers: [PublicController] })
+export class PublicModule {}
+
