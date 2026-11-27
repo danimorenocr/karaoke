@@ -46,7 +46,7 @@ export default function GoldenVinyl({ k }: ExperienceProps) {
           <p className="gv-note">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</p>
         ) : (
           <><SearchKind k={k} /><form onSubmit={k.runSearch} className="gv-search">
-            <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Canción, artista o link de YouTube" enterKeyHint="search" />
+            <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Canción o artista" enterKeyHint="search" />
             <button disabled={k.q.trim().length < 3}>Buscar</button>
           </form></>
         )
