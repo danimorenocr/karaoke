@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Module, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
@@ -72,6 +72,8 @@ class PublicController {
     const canAny = await this.plans.has(table.businessId, 'searchAny');
     const wanted = mode === 'KARAOKE' || mode === 'ANY' ? mode : table.business.searchMode;
     const m = canAny && table.business.searchMode === 'ANY' ? wanted : 'KARAOKE';
+    // Los comensales buscan por nombre: no se aceptan links pegados (el DJ si puede, por su propio buscador)
+    if (/https?:\/\/|youtu\.?be|youtube\.com/i.test(q)) throw new BadRequestException('Escribe el nombre de la canción o del artista');
     // Biblioteca del bar primero; si no hay coincidencias (o el agente no esta), YouTube
     const local = await this.agents.search(table.businessId, q);
     if (local.length) return local;
