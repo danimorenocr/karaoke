@@ -51,7 +51,7 @@ export default function NeonWorld({ k }: ExperienceProps) {
               ) : (
                 <><SearchKind k={k} /><form onSubmit={k.runSearch} className="nw-search">
                   <span>&gt;_</span>
-                  <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="canción, artista o link" enterKeyHint="search" />
+                  <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="canción o artista" enterKeyHint="search" />
                   <button disabled={k.q.trim().length < 3}>BUSCAR</button>
                 </form></>
               )

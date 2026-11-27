@@ -49,7 +49,7 @@ export default function Editorial({ k }: ExperienceProps) {
             <p className="ed-lede">{blocked || `Tu mesa ya tiene ${holding} canciones sin terminar (máximo ${state.maxPending}). Cuando termine una podrás pedir otra.`}</p>
           ) : (
             <><SearchKind k={k} /><form onSubmit={k.runSearch} className="ed-search">
-              <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Título, artista o link de YouTube" enterKeyHint="search" />
+              <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Título o artista" enterKeyHint="search" />
               <button disabled={k.q.trim().length < 3}>Buscar →</button>
             </form></>
           )

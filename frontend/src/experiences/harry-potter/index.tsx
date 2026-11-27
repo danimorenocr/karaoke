@@ -72,7 +72,7 @@ export default function HarryPotter({ k }: ExperienceProps) {
         ) : (
           <><SearchKind k={k} /><form onSubmit={k.runSearch} className="hp-search">
             <svg viewBox="0 0 24 24" aria-hidden><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2.4" /><path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
-            <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Buscar canción o pegar link de YouTube" enterKeyHint="search" />
+            <input value={k.q} onChange={(e) => k.setQ(e.target.value)} placeholder="Buscar canción o artista" enterKeyHint="search" />
             <svg className="hp-wand" viewBox="0 0 24 24" aria-hidden><path d="M4 20L15 9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /><path d="M17 3l.9 2.1L20 6l-2.1.9L17 9l-.9-2.1L14 6l2.1-.9zM21 11l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" fill="currentColor" /></svg>
           </form></>
         )

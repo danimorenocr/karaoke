@@ -105,7 +105,7 @@ export default function Classic({ k }: ExperienceProps) {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Canción, artista o link de YouTube"
+              placeholder="Canción o artista"
               enterKeyHint="search"
               autoFocus
               className="min-w-0 flex-1 bg-transparent py-2 text-base outline-none placeholder:text-zinc-500" style={{ color: C.cream }}
