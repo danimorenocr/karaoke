@@ -56,6 +56,8 @@ class UpdateBusinessDto {
   // Imagen (data URL) o null para quitarla
   @IsOptional() @IsString() @MaxLength(3_000_000) @Matches(/^data:image\/(png|jpe?g|webp);base64,/) tvBanner?: string | null;
   @IsOptional() @IsInt() @Min(0) @Max(60) tvInterludeSec?: number;
+  // Cuenta regresiva al vaciarse la cola: pasados estos segundos, las canciones nuevas esperan al boton del DJ
+  @IsOptional() @IsInt() @Min(0) @Max(600) queueResumeSec?: number;
   @IsOptional() @IsInt() @Min(1) @Max(20) maxPendingPerTable?: number;
   @IsOptional() @IsBoolean() autoApprove?: boolean;
   @IsOptional() @IsBoolean() showQueue?: boolean;
