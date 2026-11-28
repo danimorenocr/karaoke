@@ -94,6 +94,8 @@ class DjController {
   @Patch('playback/paused') pause(@CurrentUser() u: AuthUser, @Body() b: FlagDto) { return this.q.setPaused(biz(u), b.value); }
   @Patch('autodj') autodj(@CurrentUser() u: AuthUser, @Body() b: AutoDjDto) { return this.q.setAutoDj(biz(u), b.mode, b.genres); }
   @Post('playback/skip') skip(@CurrentUser() u: AuthUser) { return this.q.skip(biz(u)); }
+  /** Reanuda la cola en espera: la cuenta regresiva de cola vacia ya termino y el DJ decide seguir. */
+  @Post('playback/resume') resume(@CurrentUser() u: AuthUser) { return this.q.resumeQueue(biz(u)); }
   @Post('playback/reload') reload(@CurrentUser() u: AuthUser) { return this.q.reloadCurrent(biz(u)); }
   @Patch('requests/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.q.approve(biz(u), id); }
   @Patch('requests/:id/reject') reject(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: ReasonDto) { return this.q.reject(biz(u), id, b.reason); }

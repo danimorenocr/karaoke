@@ -683,11 +683,11 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
   const [logoDirty, setLogoDirty] = useState(false);
   const [bannerDirty, setBannerDirty] = useState(false);
   const [bannerErr, setBannerErr] = useState('');
-  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, showQueue: biz.showQueue !== false, autoDownload: biz.autoDownload !== false, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, voteScope: (biz.voteScope ?? 'SONG') as 'SONG' | 'TABLE', searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8 });
+  const [f, setF] = useState({ name: biz.name, primaryColor: biz.primaryColor, maxPendingPerTable: biz.maxPendingPerTable, autoApprove: biz.autoApprove, showQueue: biz.showQueue !== false, autoDownload: biz.autoDownload !== false, voteMode: !!biz.voteMode, voteSec: biz.voteSec ?? 15, voteScope: (biz.voteScope ?? 'SONG') as 'SONG' | 'TABLE', searchMode: biz.searchMode as 'KARAOKE' | 'ANY', tvInterludeSec: biz.tvInterludeSec ?? 8, queueResumeSec: biz.queueResumeSec ?? 15 });
   return (
     <form
       className="grid gap-6 lg:grid-cols-2"
-      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, showQueue: f.showQueue, ...(has('localLibrary') ? { autoDownload: f.autoDownload } : {}), maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteScope: f.voteScope, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
+      onSubmit={(e) => { e.preventDefault(); onSave({ name: f.name, showQueue: f.showQueue, queueResumeSec: Math.max(0, Math.min(600, Math.round(Number(f.queueResumeSec) || 0))), ...(has('localLibrary') ? { autoDownload: f.autoDownload } : {}), maxPendingPerTable: Number(f.maxPendingPerTable), ...(has('autoApprove') ? { autoApprove: f.autoApprove } : {}), ...(has('voting') ? { voteMode: f.voteMode, voteScope: f.voteScope, voteSec: Math.max(5, Math.min(60, Math.round(Number(f.voteSec) || 15))) } : {}), ...(has('searchAny') ? { searchMode: f.searchMode } : {}), ...(has('branding') ? { primaryColor: f.primaryColor, ...(logoDirty ? { logoUrl: logo } : {}) } : {}), ...(has('tvBanner') ? { tvInterludeSec: Math.max(0, Math.min(60, Math.round(Number(f.tvInterludeSec) || 0))), ...(bannerDirty ? { tvBanner: banner } : {}) } : {}) }); }}
     >
       <Card title="Identidad del bar">
         <div className="grid gap-4">
@@ -725,6 +725,7 @@ function Settings({ biz, onSave }: { biz: any; onSave: (d: any) => void }) {
       <Card title="Reglas de solicitudes">
         <div className="grid gap-4">
           <Field label="Canciones en espera por mesa" type="number" min={1} max={20} hint="Cuántas puede tener una mesa a la vez" value={f.maxPendingPerTable} onChange={(e) => setF({ ...f, maxPendingPerTable: Number(e.target.value) })} />
+          <Field label="Cuenta regresiva al vaciarse la cola (segundos)" type="number" min={0} max={600} hint="Por defecto 15. Si la cola se vacía y pasa este tiempo sin canciones, las nuevas ya no suenan solas: esperan a que el DJ pulse «Reanudar cola» en su panel. Pon 0 para que esperen de inmediato." value={f.queueResumeSec} onChange={(e) => setF({ ...f, queueResumeSec: Number(e.target.value) })} />
           <div className="grid gap-1.5 text-sm">
             <span className="font-medium text-slate-300">¿Qué pueden buscar los clientes?</span>
             <div className="grid grid-cols-2 gap-2">

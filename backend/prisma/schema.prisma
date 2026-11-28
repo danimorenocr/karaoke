@@ -85,6 +85,8 @@ model Business {
   tvBannerAt         DateTime?
   // Segundos que se muestra el aviso entre canciones (para pasar los microfonos de mesa en mesa)
   tvInterludeSec     Int            @default(8)
+  // Cuenta regresiva al vaciarse la cola: pasados estos segundos sin canciones, las nuevas esperan al boton del DJ
+  queueResumeSec     Int            @default(15)
   // Disenos que sus mesas pueden usar; vacio = todos (los define el super admin)
   allowedExperiences String[]       @default([])
   primaryColor       String         @default("#ec4899")
@@ -164,6 +166,8 @@ model KaraokeSession {
   tvStarted    Boolean       @default(false)
   // Latido de la TV (se guarda en BD para sobrevivir reinicios) y posicion de la cancion actual
   tvLastSeenAt DateTime?
+  // Cuando quedo vacia la cola (null = hay musica o nunca se ha vaciado); arranca la cuenta regresiva del DJ
+  queueEmptyAt DateTime?
   positionSec  Int           @default(0)
   startedAt    DateTime      @default(now())
   endedAt      DateTime?

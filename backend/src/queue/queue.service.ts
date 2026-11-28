@@ -156,7 +156,7 @@ export class QueueService {
     }
   }
 
-  private async promote(tx: Tx, sessionId: string) {
+  private async promote(tx: Tx, sessionId: string, force = false) {
     const session = await tx.karaokeSession.findUniqueOrThrow({ where: { id: sessionId } });
     if (!session.tvStarted || session.status !== 'ACTIVE') return;
     await this.topUpAuto(tx, session.businessId, sessionId);
@@ -168,11 +168,30 @@ export class QueueService {
       orderBy: [{ auto: 'asc' }, { position: 'asc' }, { requestedAt: 'asc' }],
     });
     if (next) {
+      // Cola en espera: se acabo la musica y ya paso la cuenta regresiva (queueResumeSec);
+      // las canciones nuevas no suenan solas hasta que el DJ pulse "Reanudar cola" (force).
+      if (!force && session.queueEmptyAt) {
+        const biz = await tx.business.findUniqueOrThrow({ where: { id: session.businessId }, select: { queueResumeSec: true } });
+        if (Date.now() - session.queueEmptyAt.getTime() >= biz.queueResumeSec * 1000) return;
+      }
       await tx.songRequest.update({ where: { id: next.id }, data: { status: 'PLAYING', startedAt: new Date() } });
-      await tx.karaokeSession.update({ where: { id: sessionId }, data: { positionSec: 0 } }); // cancion nueva: empieza desde 0
+      await tx.karaokeSession.update({ where: { id: sessionId }, data: { positionSec: 0, queueEmptyAt: null } }); // cancion nueva: empieza desde 0
       this.events.record({ businessId: next.businessId, sessionId, tableId: next.tableId, type: 'PLAYBACK_STARTED', metadata: { requestId: next.id, videoId: next.videoId, auto: next.auto } });
       await this.topUpAuto(tx, session.businessId, sessionId); // repone la cola automatica
+    } else if (!session.queueEmptyAt) {
+      // Se acabo la cola: arranca la cuenta regresiva; al terminar se activa el boton del DJ
+      await tx.karaokeSession.update({ where: { id: sessionId }, data: { queueEmptyAt: new Date() } });
     }
+  }
+
+  /** El DJ reanuda la cola en espera (la cuenta regresiva de cola vacia ya termino): suena ya la siguiente. */
+  resumeQueue(businessId: string) {
+    return this.locked(businessId, async (tx) => {
+      const s = await this.requireActiveSession(tx, businessId);
+      await tx.karaokeSession.update({ where: { id: s.id }, data: { queueEmptyAt: null } });
+      await this.promote(tx, s.id, true);
+      return { ok: true };
+    });
   }
 
   /** Auto-DJ activo: mantiene ya elegidas las proximas canciones normales (cola automatica), separadas de las solicitudes. */
@@ -306,7 +325,7 @@ export class QueueService {
 
   /** Datos del local que ven el panel DJ y la TV (la TV usa las marcas de version para pedir logo y banner solo si cambian). */
   private businessView(business: BizLite, f: Set<string>) {
-    return { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') && business.hasBanner ? (business.tvBannerAt ?? new Date(0)) : null, primaryColor: f.has('branding') ? business.primaryColor : null, logoAt: f.has('branding') && business.hasLogo ? (business.logoAt ?? new Date(0)) : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec + (business.voteScope === 'TABLE' ? SCORE_SEC : 0) + NEXT_UP_SEC : 0), voteMode: business.voteMode && f.has('voting'), voteSec: business.voteMode && f.has('voting') ? business.voteSec : null, voteScope: business.voteScope, scoreSec: business.voteMode && f.has('voting') && business.voteScope === 'TABLE' ? SCORE_SEC : 0, features: [...f] };
+    return { name: business.name, autoApprove: business.autoApprove && f.has('autoApprove'), searchMode: f.has('searchAny') ? business.searchMode : 'KARAOKE', autoDjMode: f.has('autoDj') ? business.autoDjMode : 'OFF', autoDjGenres: business.autoDjGenres, autoDjCatalog: AUTO_DJ_GENRES, tvBannerAt: f.has('tvBanner') && business.hasBanner ? (business.tvBannerAt ?? new Date(0)) : null, primaryColor: f.has('branding') ? business.primaryColor : null, logoAt: f.has('branding') && business.hasLogo ? (business.logoAt ?? new Date(0)) : null, tvInterludeSec: Math.max(f.has('tvBanner') ? business.tvInterludeSec : 0, business.voteMode && f.has('voting') ? business.voteSec + (business.voteScope === 'TABLE' ? SCORE_SEC : 0) + NEXT_UP_SEC : 0), voteMode: business.voteMode && f.has('voting'), voteSec: business.voteMode && f.has('voting') ? business.voteSec : null, voteScope: business.voteScope, queueResumeSec: business.queueResumeSec ?? 15, scoreSec: business.voteMode && f.has('voting') && business.voteScope === 'TABLE' ? SCORE_SEC : 0, features: [...f] };
   }
 
   // ---------- estados (lectura) ----------
@@ -347,6 +366,10 @@ export class QueueService {
         startedAt: session.startedAt,
       },
       current: current && this.view(current),
+      // Cola vacia hace un rato: el panel muestra la cuenta regresiva y, al acabar, el boton "Reanudar cola"
+      queueHold: !current && session.queueEmptyAt
+        ? { emptyAt: session.queueEmptyAt, resumeSec: business.queueResumeSec ?? 15, waiting: queue.length + autoQueue.length }
+        : null,
       queue: this.withProbe(queue.map((r) => this.view(r))),
       autoQueue: this.withProbe(autoQueue.map((r) => this.view(r))),
       pending: this.withProbe(pending.map((r) => this.view(r))),
@@ -1067,4 +1090,4 @@ export class QueueService {
       return { ok: true };
     });
   }
-}
+         }
