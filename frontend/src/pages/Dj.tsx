@@ -70,6 +70,7 @@ export default function Dj() {
   const [s, setS] = useState<any>(null);
   const [dlPct, setDlPct] = useState<Record<string, number>>({}); // avance en vivo de las descargas (requestId -> %)
   const [fetchedAt, setFetchedAt] = useState(0); // momento de la ultima recarga, para interpolar el progreso
+  const [now, setNow] = useState(Date.now()); // reloj para la cuenta regresiva de cola vacia
   const [online, setOnline] = useState(true);
   const [tvConnected, setTvConnected] = useState(false);
   const [tvDown, setTvDown] = useState(false); // la TV lleva varios segundos desconectada
@@ -257,6 +258,14 @@ export default function Dj() {
     return () => { clearInterval(t); document.title = 'TONO'; };
   }, [tvDown]);
 
+  // Reloj de 1 s mientras dura la cuenta regresiva de cola vacia (para pintar el cambio sin recargar)
+  const holdOn = !!s?.queueHold;
+  useEffect(() => {
+    if (!holdOn) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [holdOn]);
+
   /** Reinicia la cancion desde 0 en la TV y la barra. */
   const reloadSong = () => {
     setS((p: any) => (p ? { ...p, session: { ...p.session, positionSec: 0 } } : p)); // la barra vuelve a 0:00 al instante
@@ -280,6 +289,10 @@ export default function Dj() {
 
   if (!s) return <div className="grid min-h-screen place-items-center bg-[#05060a] text-slate-500">Cargando...</div>;
   const session = s.session;
+  // Cola vacia: cuenta regresiva (resumeSec) y, al acabar, boton para reanudar cuando lleguen canciones
+  const hold = s.queueHold as { emptyAt: string; resumeSec: number; waiting: number } | null;
+  const holdLeft = hold ? Math.max(0, Math.ceil((new Date(hold.emptyAt).getTime() + hold.resumeSec * 1000 - now) / 1000)) : 0;
+  const holdArmed = !!hold && holdLeft <= 0;
   // Solicitudes que el reproductor oculto aun no ha probado (las marca el backend con needsProbe)
   const probeItems = [...(s.pending ?? []), ...(s.queue ?? []), ...(s.autoQueue ?? [])]
     .filter((r: any) => r.needsProbe)
@@ -483,6 +496,25 @@ export default function Dj() {
                     </div>
                     <SongProgress positionSec={Number(session.positionSec ?? 0)} durationSec={s.current.durationSec} paused={!!session.paused} fetchedAt={fetchedAt} />
                     </>
+                  ) : hold ? (
+                    <div className="px-5 pb-6">
+                      {holdArmed ? (
+                        <div className="flex flex-wrap items-center gap-4">
+                          <Btn kind="accent" className={`px-5 py-2.5 ${hold.waiting > 0 ? 'animate-pulse' : ''}`} onClick={() => act('POST', '/dj/playback/resume')}>
+                            <span className="inline-flex items-center gap-2"><Icon name="play" className="h-4 w-4" />Reanudar cola{hold.waiting > 0 ? ` (${hold.waiting})` : ''}</span>
+                          </Btn>
+                          <p className="min-w-60 flex-1 text-sm text-slate-300">
+                            {hold.waiting > 0
+                              ? `${hold.waiting === 1 ? 'Hay 1 canción esperando' : `Hay ${hold.waiting} canciones esperando`}. No suena sola para no montarse encima de la música externa: púlsalo cuando estés listo.`
+                              : 'Cola en espera: la próxima canción que llegue no sonará sola. Púlsalo para volver al karaoke.'}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-300">
+                          Se acabó la cola. Si llega una canción en los próximos <b className="tabular-nums text-white">{holdLeft} s</b> suena sola; después esperará a que pulses «Reanudar cola».
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <p className="px-5 pb-6 text-sm text-slate-300">
                       {session.tvStarted
